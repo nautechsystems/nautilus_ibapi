@@ -8,7 +8,7 @@ repository = 'https://interactivebrokers.github.io/tws-api'
 license = 'IB API Non-Commercial License or the IB API Commercial License'
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">3.9,<3.12"
 
 [build-system]
 requires = ["poetry-core"]
