@@ -1,0 +1,75 @@
+name: Detect IB API Release
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+
+  workflow_dispatch:
+
+jobs:
+  detect-release:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Get Latest Version
+        id: version
+        run: |
+          response=$(curl -s https://interactivebrokers.github.io)
+          file_url=https://$(echo "$response" | grep -oP '(interactivebrokers.*twsapi_macunix.*zip)(?=.*Stable)')
+          file_name=$(echo "$file_url" | grep -oP 'twsapi_macunix.*.zip')
+          build_version=$(echo "$file_url" | grep -oP '(?<=twsapi_macunix.).*(?=.zip)')
+          echo "file_url=$file_url" >> $GITHUB_OUTPUT
+          echo "file_name=$file_name" >> $GITHUB_OUTPUT
+          echo "build_version=$build_version" >> $GITHUB_OUTPUT
+
+      - name: Check if there is an update
+        id: check-update
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list > /tmp/ibapi-releases
+          if grep -qF '${{ steps.version.outputs.build_version }}' /tmp/ibapi-releases
+          then
+            echo "has_update=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_update=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download
+        if: ${{ steps.check-update.outputs.has_update == 'true' }}
+        run: |
+          curl -sSL "${{ steps.version.outputs.file_url }}" --output "/tmp/${{ steps.version.outputs.file_name }}"
+
+      - name: Extract and Move
+        if: ${{ steps.check-update.outputs.has_update == 'true' }}
+        run: |
+          unzip -o "/tmp/${{ steps.version.outputs.file_name }}" -d /tmp
+          rsync -a /tmp/IBJts/source/pythonclient/ ./
+          echo "$build_version" > version
+
+      - name: Create release
+        if: ${{ steps.check-update.outputs.has_update == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create 'ibapi-stable@${{ steps.version.outputs.build_version }}' \
+            -t 'IB API Stable ${{ steps.version.outputs.build_version }}' \
+            -n 'IB API Stable ${{ steps.version.outputs.build_version }} release files'
+
+      - name: Create PR
+        if: ${{ steps.check-update.outputs.has_update == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          t_branch='update-stable-to-${{ steps.version.outputs.build_version }}'
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git pull
+          git checkout -b "$t_branch" origin/main
+          git add -A
+          git commit -m 'Update Stable to `${{ steps.version.outputs.build_version }}`'
+          git push --set-upstream origin "$t_branch"
+          gh pr create --base main --fill
