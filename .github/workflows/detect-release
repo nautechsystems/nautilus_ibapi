@@ -48,7 +48,7 @@ jobs:
         run: |
           unzip -o "/tmp/${{ steps.version.outputs.file_name }}" -d /tmp
           rsync -a /tmp/IBJts/source/pythonclient/ ./
-          echo "$build_version" > version
+          sed -i 's/version = "[^"]*"/version = "'"${{ steps.version.outputs.build_version }}"'"/' pyproject.toml
 
       - name: Create release
         if: ${{ steps.check-update.outputs.has_update == 'true' }}
