@@ -14,6 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Check unzip version
+        run: unzip -v
+
       - name: Get Latest Version
         id: version
         run: |

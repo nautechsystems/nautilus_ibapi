@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "ibapi"
+name = "nautilus_ibapi"
 version = "1019.01"
 description='Python IB API'
 authors = ['IBG LLC <dnastase@interactivebrokers.com>']
