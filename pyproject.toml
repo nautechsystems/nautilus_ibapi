@@ -6,6 +6,8 @@ authors = ['IBG LLC <dnastase@interactivebrokers.com>']
 readme = "README.md"
 repository = 'https://interactivebrokers.github.io/tws-api'
 license = 'IB API Non-Commercial License or the IB API Commercial License'
+include = ["ibapi/**/*"]
+packages = [{include = "ibapi"}]
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.12"
@@ -13,7 +15,3 @@ python = ">=3.9,<3.12"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.packages]
-name = "ibapi"
-include = ["ibapi/**/*"]
