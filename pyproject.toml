@@ -1,16 +1,16 @@
 [tool.poetry]
 name = "nautilus_ibapi"
-version = "1019.01"
-description='Python IB API'
-authors = ['IBG LLC <dnastase@interactivebrokers.com>']
+version = "10.19.01"
+description="Python IB API"
+authors = ["IBG LLC <dnastase@interactivebrokers.com>"]
 readme = "README.md"
-repository = 'https://interactivebrokers.github.io/tws-api'
-license = 'IB API Non-Commercial License or the IB API Commercial License'
+repository = "https://interactivebrokers.github.io/tws-api"
+license = "IB API Non-Commercial License or the IB API Commercial License"
 include = ["ibapi/**/*"]
 packages = [{include = "ibapi"}]
 
 [tool.poetry.dependencies]
-python = ">=3.9,<3.12"
+python = ">=3.9"
 
 [build-system]
 requires = ["poetry-core"]
