@@ -8,7 +8,7 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 VERSION = {
     'major': 10,
     'minor': 19,
-    'micro': 3}
+    'micro': 4}
 
 
 def get_version_string():
