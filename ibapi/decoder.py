@@ -1,7 +1,9 @@
 """
-Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
+Copyright (C) 2024 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
+from ibapi.const import NO_VALID_ID
+from ibapi.contract import getEnumTypeFromString
 
 """
 The Decoder knows how to transform a message's payload into higher level
@@ -11,17 +13,20 @@ It will call the corresponding method from the EWrapper so that customer's code
 """
 
 from ibapi.message import IN
-from ibapi.wrapper import * # @UnusedWildImport
+from ibapi.wrapper import *  # @UnusedWildImport
 from ibapi.contract import ContractDescription
-from ibapi.server_versions import * # @UnusedWildImport
-from ibapi.utils import * # @UnusedWildImport
+from ibapi.server_versions import *  # @UnusedWildImport
+from ibapi.utils import *  # @UnusedWildImport
 from ibapi.softdollartier import SoftDollarTier
-from ibapi.ticktype import * # @UnusedWildImport
+from ibapi.ticktype import *  # @UnusedWildImport
 from ibapi.tag_value import TagValue
 from ibapi.scanner import ScanData
 from ibapi.errors import BAD_MESSAGE
-from ibapi.common import * # @UnusedWildImport
+from ibapi.common import *  # @UnusedWildImport
 from ibapi.orderdecoder import OrderDecoder
+from ibapi.contract import FundDistributionPolicyIndicator
+from ibapi.contract import FundAssetType
+from ibapi.ineligibility_reason import IneligibilityReason
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +40,7 @@ class HandleInfo(Object):
             raise ValueError("both wrap and proc can't be None")
 
     def __str__(self):
-        s = "wrap:%s meth:%s prms:%s" % (self.wrapperMeth,
-                self.processMeth, self.wrapperParams)
+        s = f"wrap:{self.wrapperMeth} meth:{self.processMeth} prms:{self.wrapperParams}"
         return s
 
 
@@ -46,7 +50,6 @@ class Decoder(Object):
         self.serverVersion = serverVersion
         self.discoverParams()
 
-
     def processTickPriceMsg(self, fields):
         next(fields)
         decode(int, fields)
@@ -54,8 +57,8 @@ class Decoder(Object):
         reqId = decode(int, fields)
         tickType = decode(int, fields)
         price = decode(float, fields)
-        size = decode(Decimal, fields) # ver 2 field
-        attrMask = decode(int, fields) # ver 3 field
+        size = decode(Decimal, fields)  # ver 2 field
+        attrMask = decode(int, fields)  # ver 3 field
 
         attrib = TickAttrib()
 
@@ -87,7 +90,6 @@ class Decoder(Object):
         if sizeTickType != TickTypeEnum.NOT_SET:
             self.wrapper.tickSize(reqId, sizeTickType, size)
 
-
     def processTickSizeMsg(self, fields):
         next(fields)
         decode(int, fields)
@@ -100,7 +102,6 @@ class Decoder(Object):
             self.wrapper.tickSize(reqId, sizeTickType, size)
 
     def processOrderStatusMsg(self, fields):
-
         next(fields)
         if self.serverVersion < MIN_SERVER_VER_MARKET_CAP_PRICE:
             decode(int, fields)
@@ -110,25 +111,34 @@ class Decoder(Object):
         remaining = decode(Decimal, fields)
         avgFillPrice = decode(float, fields)
 
-        permId = decode(int, fields) # ver 2 field
-        parentId = decode(int, fields) # ver 3 field
-        lastFillPrice = decode(float, fields) # ver 4 field
-        clientId = decode(int, fields) # ver 5 field
-        whyHeld = decode(str, fields) # ver 6 field
+        permId = decode(int, fields)  # ver 2 field
+        parentId = decode(int, fields)  # ver 3 field
+        lastFillPrice = decode(float, fields)  # ver 4 field
+        clientId = decode(int, fields)  # ver 5 field
+        whyHeld = decode(str, fields)  # ver 6 field
 
         if self.serverVersion >= MIN_SERVER_VER_MARKET_CAP_PRICE:
             mktCapPrice = decode(float, fields)
         else:
             mktCapPrice = None
 
-        self.wrapper.orderStatus(orderId, status, filled, remaining,
-            avgFillPrice, permId, parentId, lastFillPrice, clientId, whyHeld, mktCapPrice)
-
+        self.wrapper.orderStatus(
+            orderId,
+            status,
+            filled,
+            remaining,
+            avgFillPrice,
+            permId,
+            parentId,
+            lastFillPrice,
+            clientId,
+            whyHeld,
+            mktCapPrice,
+        )
 
     def processOpenOrder(self, fields):
-
         next(fields)
-        
+
         order = Order()
         contract = Contract()
         orderState = OrderState()
@@ -138,8 +148,9 @@ class Decoder(Object):
         else:
             version = self.serverVersion
 
-        
-        OrderDecoder.__init__(self, contract, order, orderState, version, self.serverVersion)
+        OrderDecoder.__init__(
+            self, contract, order, orderState, version, self.serverVersion
+        )
 
         # read orderId
         OrderDecoder.decodeOrderId(self, fields)
@@ -213,20 +224,23 @@ class Decoder(Object):
         OrderDecoder.decodeUsePriceMgmtAlgo(self, fields)
         OrderDecoder.decodeDuration(self, fields)
         OrderDecoder.decodePostToAts(self, fields)
-        OrderDecoder.decodeAutoCancelParent(self, fields, MIN_SERVER_VER_AUTO_CANCEL_PARENT)
+        OrderDecoder.decodeAutoCancelParent(
+            self, fields, MIN_SERVER_VER_AUTO_CANCEL_PARENT
+        )
         OrderDecoder.decodePegBestPegMidOrderAttributes(self, fields)
+        OrderDecoder.decodeCustomerAccount(self, fields)
+        OrderDecoder.decodeProfessionalCustomer(self, fields)
+        OrderDecoder.decodeBondAccruedInterest(self, fields)
 
         self.wrapper.openOrder(order.orderId, contract, order, orderState)
 
-
     def processPortfolioValueMsg(self, fields):
-
         next(fields)
         version = decode(int, fields)
 
         # read contract fields
         contract = Contract()
-        contract.conId = decode(int, fields) # ver 6 field
+        contract.conId = decode(int, fields)  # ver 6 field
         contract.symbol = decode(str, fields)
         contract.secType = decode(str, fields)
         contract.lastTradeDateOrContractMonth = decode(str, fields)
@@ -238,7 +252,7 @@ class Decoder(Object):
             contract.primaryExchange = decode(str, fields)
 
         contract.currency = decode(str, fields)
-        contract.localSymbol = decode(str, fields) # ver 2 field
+        contract.localSymbol = decode(str, fields)  # ver 2 field
         if version >= 8:
             contract.tradingClass = decode(str, fields)
 
@@ -246,22 +260,27 @@ class Decoder(Object):
 
         marketPrice = decode(float, fields)
         marketValue = decode(float, fields)
-        averageCost = decode(float, fields) # ver 3 field
-        unrealizedPNL = decode(float, fields) # ver 3 field
-        realizedPNL = decode(float, fields) # ver 3 field
+        averageCost = decode(float, fields)  # ver 3 field
+        unrealizedPNL = decode(float, fields)  # ver 3 field
+        realizedPNL = decode(float, fields)  # ver 3 field
 
-        accountName = decode(str, fields) # ver 4 field
+        accountName = decode(str, fields)  # ver 4 field
 
         if version == 6 and self.serverVersion == 39:
             contract.primaryExchange = decode(str, fields)
 
-        self.wrapper.updatePortfolio( contract,
-            position, marketPrice, marketValue, averageCost,
-            unrealizedPNL, realizedPNL, accountName)
-
+        self.wrapper.updatePortfolio(
+            contract,
+            position,
+            marketPrice,
+            marketValue,
+            averageCost,
+            unrealizedPNL,
+            realizedPNL,
+            accountName,
+        )
 
     def processContractDataMsg(self, fields):
-
         next(fields)
         version = 8
         if self.serverVersion < MIN_SERVER_VER_SIZE_RULES:
@@ -275,6 +294,8 @@ class Decoder(Object):
         contract.contract.symbol = decode(str, fields)
         contract.contract.secType = decode(str, fields)
         self.readLastTradeDate(fields, contract, False)
+        if self.serverVersion >= MIN_SERVER_VER_LAST_TRADE_DATE:
+            contract.contract.lastTradeDate = decode(str, fields)
         contract.contract.strike = decode(float, fields)
         contract.contract.right = decode(str, fields)
         contract.contract.exchange = decode(str, fields)
@@ -284,16 +305,23 @@ class Decoder(Object):
         contract.contract.tradingClass = decode(str, fields)
         contract.contract.conId = decode(int, fields)
         contract.minTick = decode(float, fields)
-        if self.serverVersion >= MIN_SERVER_VER_MD_SIZE_MULTIPLIER and self.serverVersion < MIN_SERVER_VER_SIZE_RULES:
-            decode(int, fields) # mdSizeMultiplier - not used anymore
+        if (
+            self.serverVersion >= MIN_SERVER_VER_MD_SIZE_MULTIPLIER
+            and self.serverVersion < MIN_SERVER_VER_SIZE_RULES
+        ):
+            decode(int, fields)  # mdSizeMultiplier - not used anymore
         contract.contract.multiplier = decode(str, fields)
         contract.orderTypes = decode(str, fields)
         contract.validExchanges = decode(str, fields)
-        contract.priceMagnifier = decode(int, fields) # ver 2 field
+        contract.priceMagnifier = decode(int, fields)  # ver 2 field
         if version >= 4:
             contract.underConId = decode(int, fields)
         if version >= 5:
-            contract.longName = decode(str, fields).encode().decode('unicode-escape') if self.serverVersion >= MIN_SERVER_VER_ENCODE_MSG_ASCII7 else decode(str, fields)
+            contract.longName = (
+                decode(str, fields).encode().decode("unicode-escape")
+                if self.serverVersion >= MIN_SERVER_VER_ENCODE_MSG_ASCII7
+                else decode(str, fields)
+            )
             contract.contract.primaryExchange = decode(str, fields)
         if version >= 6:
             contract.contractMonth = decode(str, fields)
@@ -332,21 +360,54 @@ class Decoder(Object):
         if self.serverVersion >= MIN_SERVER_VER_STOCK_TYPE:
             contract.stockType = decode(str, fields)
 
-        if self.serverVersion >= MIN_SERVER_VER_FRACTIONAL_SIZE_SUPPORT and self.serverVersion < MIN_SERVER_VER_SIZE_RULES:
-            decode(Decimal, fields) # sizeMinTick - not used anymore
+        if (
+            self.serverVersion >= MIN_SERVER_VER_FRACTIONAL_SIZE_SUPPORT
+            and self.serverVersion < MIN_SERVER_VER_SIZE_RULES
+        ):
+            decode(Decimal, fields)  # sizeMinTick - not used anymore
 
         if self.serverVersion >= MIN_SERVER_VER_SIZE_RULES:
             contract.minSize = decode(Decimal, fields)
             contract.sizeIncrement = decode(Decimal, fields)
             contract.suggestedSizeIncrement = decode(Decimal, fields)
 
+        if (
+            self.serverVersion >= MIN_SERVER_VER_FUND_DATA_FIELDS
+            and contract.contract.secType == "FUND"
+        ):
+            contract.fundName = decode(str, fields)
+            contract.fundFamily = decode(str, fields)
+            contract.fundType = decode(str, fields)
+            contract.fundFrontLoad = decode(str, fields)
+            contract.fundBackLoad = decode(str, fields)
+            contract.fundBackLoadTimeInterval = decode(str, fields)
+            contract.fundManagementFee = decode(str, fields)
+            contract.fundClosed = decode(bool, fields)
+            contract.fundClosedForNewInvestors = decode(bool, fields)
+            contract.fundClosedForNewMoney = decode(bool, fields)
+            contract.fundNotifyAmount = decode(str, fields)
+            contract.fundMinimumInitialPurchase = decode(str, fields)
+            contract.fundSubsequentMinimumPurchase = decode(str, fields)
+            contract.fundBlueSkyStates = decode(str, fields)
+            contract.fundBlueSkyTerritories = decode(str, fields)
+            contract.fundDistributionPolicyIndicator = getEnumTypeFromString(FundDistributionPolicyIndicator, decode(str, fields))
+            contract.fundAssetType = getEnumTypeFromString(FundAssetType, decode(str, fields))
+
+        if self.serverVersion >= MIN_SERVER_VER_INELIGIBILITY_REASONS:
+            ineligibilityReasonListCount = decode(int, fields)
+            if ineligibilityReasonListCount > 0:
+                contract.ineligibilityReasonList = []
+                for _ in range(ineligibilityReasonListCount):
+                    ineligibilityReason = IneligibilityReason()
+                    ineligibilityReason.id_ = decode(str, fields)
+                    ineligibilityReason.description = decode(str, fields)
+                    contract.ineligibilityReasonList.append(ineligibilityReason)
+
         self.wrapper.contractDetails(reqId, contract)
 
-
     def processBondContractDataMsg(self, fields):
-
         next(fields)
-        version = 6;
+        version = 6
         if self.serverVersion < MIN_SERVER_VER_SIZE_RULES:
             version = decode(int, fields)
 
@@ -374,14 +435,17 @@ class Decoder(Object):
         contract.contract.tradingClass = decode(str, fields)
         contract.contract.conId = decode(int, fields)
         contract.minTick = decode(float, fields)
-        if self.serverVersion >= MIN_SERVER_VER_MD_SIZE_MULTIPLIER and self.serverVersion < MIN_SERVER_VER_SIZE_RULES:
-            decode(int, fields) # mdSizeMultiplier - not used anymore
+        if (
+            self.serverVersion >= MIN_SERVER_VER_MD_SIZE_MULTIPLIER
+            and self.serverVersion < MIN_SERVER_VER_SIZE_RULES
+        ):
+            decode(int, fields)  # mdSizeMultiplier - not used anymore
         contract.orderTypes = decode(str, fields)
         contract.validExchanges = decode(str, fields)
-        contract.nextOptionDate = decode(str, fields) # ver 2 field
-        contract.nextOptionType = decode(str, fields) # ver 2 field
-        contract.nextOptionPartial = decode(bool, fields) # ver 2 field
-        contract.notes = decode(str, fields) # ver 2 field
+        contract.nextOptionDate = decode(str, fields)  # ver 2 field
+        contract.nextOptionType = decode(str, fields)  # ver 2 field
+        contract.nextOptionPartial = decode(bool, fields)  # ver 2 field
+        contract.notes = decode(str, fields)  # ver 2 field
         if version >= 4:
             contract.longName = decode(str, fields)
         if version >= 6:
@@ -422,7 +486,7 @@ class Decoder(Object):
             data.contract = ContractDetails()
 
             data.rank = decode(int, fields)
-            data.contract.contract.conId = decode(int, fields) # ver 3 field
+            data.contract.contract.conId = decode(int, fields)  # ver 3 field
             data.contract.contract.symbol = decode(str, fields)
             data.contract.contract.secType = decode(str, fields)
             data.contract.contract.lastTradeDateOrContractMonth = decode(str, fields)
@@ -437,17 +501,23 @@ class Decoder(Object):
             data.benchmark = decode(str, fields)
             data.projection = decode(str, fields)
             data.legsStr = decode(str, fields)
-            self.wrapper.scannerData(reqId, data.rank, data.contract,
-                data.distance, data.benchmark, data.projection, data.legsStr)
+            self.wrapper.scannerData(
+                reqId,
+                data.rank,
+                data.contract,
+                data.distance,
+                data.benchmark,
+                data.projection,
+                data.legsStr,
+            )
 
         self.wrapper.scannerDataEnd(reqId)
-
 
     def processExecutionDataMsg(self, fields):
         next(fields)
         version = self.serverVersion
 
-        if(self.serverVersion < MIN_SERVER_VER_LAST_LIQUIDITY):
+        if self.serverVersion < MIN_SERVER_VER_LAST_LIQUIDITY:
             version = decode(int, fields)
 
         reqId = -1
@@ -458,7 +528,7 @@ class Decoder(Object):
 
         # decode contract fields
         contract = Contract()
-        contract.conId = decode(int, fields) # ver 5 field
+        contract.conId = decode(int, fields)  # ver 5 field
         contract.symbol = decode(str, fields)
         contract.secType = decode(str, fields)
         contract.lastTradeDateOrContractMonth = decode(str, fields)
@@ -482,9 +552,9 @@ class Decoder(Object):
         execution.side = decode(str, fields)
         execution.shares = decode(Decimal, fields)
         execution.price = decode(float, fields)
-        execution.permId = decode(int, fields) # ver 2 field
+        execution.permId = decode(int, fields)  # ver 2 field
         execution.clientId = decode(int, fields)  # ver 3 field
-        execution.liquidation = decode(int, fields) # ver 4 field
+        execution.liquidation = decode(int, fields)  # ver 4 field
 
         if version >= 6:
             execution.cumQty = decode(Decimal, fields)
@@ -500,9 +570,10 @@ class Decoder(Object):
             execution.modelCode = decode(str, fields)
         if self.serverVersion >= MIN_SERVER_VER_LAST_LIQUIDITY:
             execution.lastLiquidity = decode(int, fields)
+        if self.serverVersion >= MIN_SERVER_VER_PENDING_PRICE_REVISION:
+            execution.pendingPriceRevision = decode(bool, fields)
 
         self.wrapper.execDetails(reqId, contract, execution)
-
 
     def processHistoricalDataMsg(self, fields):
         next(fields)
@@ -511,8 +582,8 @@ class Decoder(Object):
             decode(int, fields)
 
         reqId = decode(int, fields)
-        startDateStr = decode(str, fields) # ver 2 field
-        endDateStr = decode(str, fields) # ver 2 field
+        startDateStr = decode(str, fields)  # ver 2 field
+        endDateStr = decode(str, fields)  # ver 2 field
 
         itemCount = decode(int, fields)
 
@@ -529,7 +600,7 @@ class Decoder(Object):
             if self.serverVersion < MIN_SERVER_VER_SYNT_REALTIME_BARS:
                 decode(str, fields)
 
-            bar.barCount = decode(int, fields) # ver 3 field
+            bar.barCount = decode(int, fields)  # ver 3 field
 
             self.wrapper.historicalData(reqId, bar)
 
@@ -565,7 +636,17 @@ class Decoder(Object):
         bar.wap = decode(Decimal, fields)
         bar.count = decode(int, fields)
 
-        self.wrapper.realtimeBar(reqId, bar.time, bar.open, bar.high, bar.low, bar.close, bar.volume, bar.wap, bar.count)
+        self.wrapper.realtimeBar(
+            reqId,
+            bar.time,
+            bar.open,
+            bar.high,
+            bar.low,
+            bar.close,
+            bar.volume,
+            bar.wap,
+            bar.count,
+        )
 
     def processTickOptionComputationMsg(self, fields):
         version = self.serverVersion
@@ -590,19 +671,20 @@ class Decoder(Object):
         impliedVol = decode(float, fields)
         delta = decode(float, fields)
 
-        if impliedVol < 0:    # -1 is the "not computed" indicator
+        if impliedVol < 0:  # -1 is the "not computed" indicator
             impliedVol = None
-        if delta == -2: # -2 is the "not computed" indicator
+        if delta == -2:  # -2 is the "not computed" indicator
             delta = None
 
-        if version >= 6 or \
-            tickTypeInt == TickTypeEnum.MODEL_OPTION or \
-                        tickTypeInt == TickTypeEnum.DELAYED_MODEL_OPTION:
-
+        if (
+            version >= 6
+            or tickTypeInt == TickTypeEnum.MODEL_OPTION
+            or tickTypeInt == TickTypeEnum.DELAYED_MODEL_OPTION
+        ):
             optPrice = decode(float, fields)
             pvDividend = decode(float, fields)
 
-            if optPrice == -1:    # -1 is the "not computed" indicator
+            if optPrice == -1:  # -1 is the "not computed" indicator
                 optPrice = None
             if pvDividend == -1:  # -1 is the "not computed" indicator
                 pvDividend = None
@@ -615,17 +697,26 @@ class Decoder(Object):
 
             if gamma == -2:  # -2 is the "not yet computed" indicator
                 gamma = None
-            if vega == -2:    # -2 is the "not yet computed" indicator
+            if vega == -2:  # -2 is the "not yet computed" indicator
                 vega = None
             if theta == -2:  # -2 is the "not yet computed" indicator
                 theta = None
-            if undPrice == -1:             # -1 is the "not computed" indicator
+            if undPrice == -1:  # -1 is the "not computed" indicator
                 undPrice = None
 
-        self.wrapper.tickOptionComputation(reqId, tickTypeInt, tickAttrib, impliedVol,
-            delta, optPrice, pvDividend, gamma, vega, theta, undPrice)
-
-
+        self.wrapper.tickOptionComputation(
+            reqId,
+            tickTypeInt,
+            tickAttrib,
+            impliedVol,
+            delta,
+            optPrice,
+            pvDividend,
+            gamma,
+            vega,
+            theta,
+            undPrice,
+        )
 
     def processDeltaNeutralValidationMsg(self, fields):
         next(fields)
@@ -639,7 +730,6 @@ class Decoder(Object):
         deltaNeutralContract.price = decode(float, fields)
 
         self.wrapper.deltaNeutralValidation(reqId, deltaNeutralContract)
-
 
     def processMarketDataTypeMsg(self, fields):
         next(fields)
@@ -662,7 +752,6 @@ class Decoder(Object):
         commissionReport.yieldRedemptionDate = decode(int, fields)
 
         self.wrapper.commissionReport(commissionReport)
-
 
     def processPositionDataMsg(self, fields):
         next(fields)
@@ -687,12 +776,11 @@ class Decoder(Object):
 
         position = decode(Decimal, fields)
 
-        avgCost = 0.
+        avgCost = 0.0
         if version >= 3:
             avgCost = decode(float, fields)
 
         self.wrapper.position(account, contract, position, avgCost)
-
 
     def processPositionMultiMsg(self, fields):
         next(fields)
@@ -717,8 +805,9 @@ class Decoder(Object):
         avgCost = decode(float, fields)
         modelCode = decode(str, fields)
 
-        self.wrapper.positionMulti(reqId, account, modelCode, contract, position, avgCost)
-
+        self.wrapper.positionMulti(
+            reqId, account, modelCode, contract, position, avgCost
+        )
 
     def processSecurityDefinitionOptionParameterMsg(self, fields):
         next(fields)
@@ -741,16 +830,21 @@ class Decoder(Object):
             strike = decode(float, fields)
             strikes.add(strike)
 
-        self.wrapper.securityDefinitionOptionParameter(reqId, exchange,
-            underlyingConId, tradingClass, multiplier, expirations, strikes)
-
+        self.wrapper.securityDefinitionOptionParameter(
+            reqId,
+            exchange,
+            underlyingConId,
+            tradingClass,
+            multiplier,
+            expirations,
+            strikes,
+        )
 
     def processSecurityDefinitionOptionParameterEndMsg(self, fields):
         next(fields)
 
         reqId = decode(int, fields)
         self.wrapper.securityDefinitionOptionParameterEnd(reqId)
-
 
     def processSoftDollarTiersMsg(self, fields):
         next(fields)
@@ -760,14 +854,13 @@ class Decoder(Object):
 
         tiers = []
         for _ in range(nTiers):
-                tier = SoftDollarTier()
-                tier.name = decode(str, fields)
-                tier.val = decode(str, fields)
-                tier.displayName = decode(str, fields)
-                tiers.append(tier)
+            tier = SoftDollarTier()
+            tier.name = decode(str, fields)
+            tier.val = decode(str, fields)
+            tier.displayName = decode(str, fields)
+            tiers.append(tier)
 
         self.wrapper.softDollarTiers(reqId, tiers)
-
 
     def processFamilyCodesMsg(self, fields):
         next(fields)
@@ -781,7 +874,6 @@ class Decoder(Object):
             familyCodes.append(famCode)
 
         self.wrapper.familyCodes(familyCodes)
-
 
     def processSymbolSamplesMsg(self, fields):
         next(fields)
@@ -803,14 +895,14 @@ class Decoder(Object):
                 derivSecType = decode(str, fields)
                 conDesc.derivativeSecTypes.append(derivSecType)
             contractDescriptions.append(conDesc)
-            
+
             if self.serverVersion >= MIN_SERVER_VER_BOND_ISSUERID:
                 conDesc.contract.description = decode(str, fields)
                 conDesc.contract.issuerId = decode(str, fields)
 
         self.wrapper.symbolSamples(reqId, contractDescriptions)
 
-    def processSmartComponents(self,fields):
+    def processSmartComponents(self, fields):
         next(fields)
         reqId = decode(int, fields)
         n = decode(int, fields)
@@ -825,7 +917,7 @@ class Decoder(Object):
 
         self.wrapper.smartComponents(reqId, smartComponentMap)
 
-    def processTickReqParams(self,fields):
+    def processTickReqParams(self, fields):
         next(fields)
         tickerId = decode(int, fields)
         minTick = decode(float, fields)
@@ -833,7 +925,7 @@ class Decoder(Object):
         snapshotPermissions = decode(int, fields)
         self.wrapper.tickReqParams(tickerId, minTick, bboExchange, snapshotPermissions)
 
-    def processMktDepthExchanges(self,fields):
+    def processMktDepthExchanges(self, fields):
         next(fields)
         depthMktDataDescriptions = []
         nDepthMktDataDescriptions = decode(int, fields)
@@ -848,28 +940,30 @@ class Decoder(Object):
                     desc.serviceDataType = decode(str, fields)
                     desc.aggGroup = decode(int, fields)
                 else:
-                    decode(int,fields) #boolean notSuppIsL2
+                    decode(int, fields)  # boolean notSuppIsL2
                 depthMktDataDescriptions.append(desc)
 
         self.wrapper.mktDepthExchanges(depthMktDataDescriptions)
 
-    def processHeadTimestamp(self,fields):
+    def processHeadTimestamp(self, fields):
         next(fields)
         reqId = decode(int, fields)
         headTimestamp = decode(str, fields)
-        self.wrapper.headTimestamp(reqId,headTimestamp)
+        self.wrapper.headTimestamp(reqId, headTimestamp)
 
-    def processTickNews(self,fields):
+    def processTickNews(self, fields):
         next(fields)
-        tickerId = decode( int, fields)
+        tickerId = decode(int, fields)
         timeStamp = decode(int, fields)
         providerCode = decode(str, fields)
         articleId = decode(str, fields)
         headline = decode(str, fields)
         extraData = decode(str, fields)
-        self.wrapper.tickNews(tickerId, timeStamp, providerCode, articleId, headline, extraData)
+        self.wrapper.tickNews(
+            tickerId, timeStamp, providerCode, articleId, headline, extraData
+        )
 
-    def processNewsProviders(self,fields):
+    def processNewsProviders(self, fields):
         next(fields)
         newsProviders = []
         nNewsProviders = decode(int, fields)
@@ -882,14 +976,14 @@ class Decoder(Object):
 
         self.wrapper.newsProviders(newsProviders)
 
-    def processNewsArticle(self,fields):
+    def processNewsArticle(self, fields):
         next(fields)
         reqId = decode(int, fields)
         articleType = decode(int, fields)
         articleText = decode(str, fields)
         self.wrapper.newsArticle(reqId, articleType, articleText)
 
-    def processHistoricalNews(self,fields):
+    def processHistoricalNews(self, fields):
         next(fields)
         requestId = decode(int, fields)
         time = decode(str, fields)
@@ -898,13 +992,13 @@ class Decoder(Object):
         headline = decode(str, fields)
         self.wrapper.historicalNews(requestId, time, providerCode, articleId, headline)
 
-    def processHistoricalNewsEnd(self,fields):
+    def processHistoricalNewsEnd(self, fields):
         next(fields)
         reqId = decode(int, fields)
         hasMore = decode(bool, fields)
         self.wrapper.historicalNewsEnd(reqId, hasMore)
 
-    def processHistogramData(self,fields):
+    def processHistogramData(self, fields):
         next(fields)
         reqId = decode(int, fields)
         numPoints = decode(int, fields)
@@ -912,8 +1006,8 @@ class Decoder(Object):
         histogram = []
         for _ in range(numPoints):
             dataPoint = HistogramData()
-            dataPoint.price = decode(float,fields)
-            dataPoint.size = decode(Decimal,fields)
+            dataPoint.price = decode(float, fields)
+            dataPoint.size = decode(Decimal, fields)
             histogram.append(dataPoint)
 
         self.wrapper.histogramData(reqId, histogram)
@@ -993,7 +1087,7 @@ class Decoder(Object):
         for _ in range(tickCount):
             historicalTick = HistoricalTick()
             historicalTick.time = decode(int, fields)
-            next(fields) # for consistency
+            next(fields)  # for consistency
             historicalTick.price = decode(float, fields)
             historicalTick.size = decode(Decimal, fields)
             ticks.append(historicalTick)
@@ -1073,8 +1167,16 @@ class Decoder(Object):
             exchange = decode(str, fields)
             specialConditions = decode(str, fields)
 
-            self.wrapper.tickByTickAllLast(reqId, tickType, time, price, size, tickAttribLast,
-                                           exchange, specialConditions)
+            self.wrapper.tickByTickAllLast(
+                reqId,
+                tickType,
+                time,
+                price,
+                size,
+                tickAttribLast,
+                exchange,
+                specialConditions,
+            )
         elif tickType == 3:
             # BidAsk
             bidPrice = decode(float, fields)
@@ -1086,8 +1188,9 @@ class Decoder(Object):
             tickAttribBidAsk.bidPastLow = mask & 1 != 0
             tickAttribBidAsk.askPastHigh = mask & 2 != 0
 
-            self.wrapper.tickByTickBidAsk(reqId, time, bidPrice, askPrice, bidSize,
-                                          askSize, tickAttribBidAsk)
+            self.wrapper.tickByTickBidAsk(
+                reqId, time, bidPrice, askPrice, bidSize, askSize, tickAttribBidAsk
+            )
         elif tickType == 4:
             # MidPoint
             midPoint = decode(float, fields)
@@ -1131,18 +1234,20 @@ class Decoder(Object):
         if self.serverVersion >= MIN_SERVER_VER_SMART_DEPTH:
             isSmartDepth = decode(bool, fields)
 
-        self.wrapper.updateMktDepthL2(reqId, position, marketMaker,
-                        operation, side, price, size, isSmartDepth)
-
+        self.wrapper.updateMktDepthL2(
+            reqId, position, marketMaker, operation, side, price, size, isSmartDepth
+        )
 
     def processCompletedOrderMsg(self, fields):
         next(fields)
-        
+
         order = Order()
         contract = Contract()
         orderState = OrderState()
 
-        OrderDecoder.__init__(self, contract, order, orderState, UNSET_INTEGER, self.serverVersion)
+        OrderDecoder.__init__(
+            self, contract, order, orderState, UNSET_INTEGER, self.serverVersion
+        )
 
         # read contract fields
         OrderDecoder.decodeContractFields(self, fields)
@@ -1209,6 +1314,8 @@ class Decoder(Object):
         OrderDecoder.decodeCompletedTime(self, fields)
         OrderDecoder.decodeCompletedStatus(self, fields)
         OrderDecoder.decodePegBestPegMidOrderAttributes(self, fields)
+        OrderDecoder.decodeCustomerAccount(self, fields)
+        OrderDecoder.decodeProfessionalCustomer(self, fields)
 
         self.wrapper.completedOrder(contract, order, orderState)
 
@@ -1216,7 +1323,7 @@ class Decoder(Object):
         next(fields)
 
         self.wrapper.completedOrdersEnd()
-        
+
     def processReplaceFAEndMsg(self, fields):
         next(fields)
         reqId = decode(int, fields)
@@ -1255,7 +1362,9 @@ class Decoder(Object):
             historicalSession.refDate = decode(str, fields)
             sessions.append(historicalSession)
 
-        self.wrapper.historicalSchedule(reqId, startDateTime, endDateTime, timeZone, sessions)
+        self.wrapper.historicalSchedule(
+            reqId, startDateTime, endDateTime, timeZone, sessions
+        )
 
     def processUserInfo(self, fields):
         next(fields)
@@ -1269,7 +1378,9 @@ class Decoder(Object):
         decode(int, fields)
         reqId = decode(TickerId, fields)
         errorCode = decode(int, fields)
-        errorString = decode(str, fields, False, self.serverVersion >= MIN_SERVER_VER_ENCODE_MSG_ASCII7)
+        errorString = decode(
+            str, fields, False, self.serverVersion >= MIN_SERVER_VER_ENCODE_MSG_ASCII7
+        )
         advancedOrderRejectJson = ""
         if self.serverVersion >= MIN_SERVER_VER_ADVANCED_ORDER_REJECT:
             advancedOrderRejectJson = decode(str, fields, False, True)
@@ -1281,11 +1392,11 @@ class Decoder(Object):
     def readLastTradeDate(self, fields, contract: ContractDetails, isBond: bool):
         lastTradeDateOrContractMonth = decode(str, fields)
         if lastTradeDateOrContractMonth is not None:
-            if '-' in lastTradeDateOrContractMonth: 
-                splitted = lastTradeDateOrContractMonth.split('-')
+            if "-" in lastTradeDateOrContractMonth:
+                splitted = lastTradeDateOrContractMonth.split("-")
             else:
                 splitted = lastTradeDateOrContractMonth.split()
-                
+
             if len(splitted) > 0:
                 if isBond:
                     contract.maturity = splitted[0]
@@ -1306,47 +1417,55 @@ class Decoder(Object):
             meth2handleInfo[handleInfo.wrapperMeth] = handleInfo
 
         methods = inspect.getmembers(EWrapper, inspect.isfunction)
-        for (_, meth) in methods:
-            #logger.debug("meth %s", name)
+        for _, meth in methods:
+            # logger.debug("meth %s", name)
             sig = inspect.signature(meth)
             handleInfo = meth2handleInfo.get(meth, None)
             if handleInfo is not None:
                 handleInfo.wrapperParams = sig.parameters
 
-            #for (pname, param) in sig.parameters.items():
+            # for (pname, param) in sig.parameters.items():
             #     logger.debug("\tparam %s %s %s", pname, param.name, param.annotation)
 
-
     def printParams(self):
-        for (_, handleInfo) in self.msgId2handleInfo.items():
+        for _, handleInfo in self.msgId2handleInfo.items():
             if handleInfo.wrapperMeth is not None:
                 logger.debug("meth %s", handleInfo.wrapperMeth.__name__)
                 if handleInfo.wrapperParams is not None:
-                    for (pname, param) in handleInfo.wrapperParams.items():
-                        logger.debug("\tparam %s %s %s", pname, param.name, param.annotation)
-
+                    for pname, param in handleInfo.wrapperParams.items():
+                        logger.debug(
+                            "\tparam %s %s %s", pname, param.name, param.annotation
+                        )
 
     def interpretWithSignature(self, fields, handleInfo):
         if handleInfo.wrapperParams is None:
             logger.debug("%s: no param info in %s", fields, handleInfo)
             return
 
-        nIgnoreFields = 2 #bypass msgId and versionId faster this way
+        nIgnoreFields = 2  # bypass msgId and versionId faster this way
         if len(fields) - nIgnoreFields != len(handleInfo.wrapperParams) - 1:
-            logger.error("diff len fields and params %d %d for fields: %s and handleInfo: %s",
-                         len(fields), len(handleInfo.wrapperParams), fields,
-                         handleInfo)
+            logger.error(
+                "diff len fields and params %d %d for fields: %s and handleInfo: %s",
+                len(fields),
+                len(handleInfo.wrapperParams),
+                fields,
+                handleInfo,
+            )
             return
 
         fieldIdx = nIgnoreFields
         args = []
-        for (pname, param) in handleInfo.wrapperParams.items():
+        for pname, param in handleInfo.wrapperParams.items():
             if pname != "self":
                 logger.debug("field %s ", fields[fieldIdx])
                 try:
-                    arg = fields[fieldIdx].decode('unicode-escape' if self.serverVersion >= MIN_SERVER_VER_ENCODE_MSG_ASCII7 else 'UTF-8')
+                    arg = fields[fieldIdx].decode(
+                        "unicode-escape"
+                        if self.serverVersion >= MIN_SERVER_VER_ENCODE_MSG_ASCII7
+                        else "UTF-8"
+                    )
                 except UnicodeDecodeError:
-                    arg = fields[fieldIdx].decode('latin-1')
+                    arg = fields[fieldIdx].decode("latin-1")
                 logger.debug("arg %s type %s", arg, param.annotation)
                 if param.annotation is int:
                     arg = int(arg)
@@ -1386,11 +1505,11 @@ class Decoder(Object):
             elif handleInfo.processMeth is not None:
                 handleInfo.processMeth(self, iter(fields))
         except BadMessage:
-                theBadMsg = ",".join(fields)
-                self.wrapper.error(NO_VALID_ID, BAD_MESSAGE.code(),
-                                   BAD_MESSAGE.msg() + theBadMsg)
-                raise
-
+            theBadMsg = ",".join(fields)
+            self.wrapper.error(
+                NO_VALID_ID, BAD_MESSAGE.code(), BAD_MESSAGE.msg() + theBadMsg
+            )
+            raise
 
     msgId2handleInfo = {
         IN.TICK_PRICE: HandleInfo(proc=processTickPriceMsg),
@@ -1401,7 +1520,9 @@ class Decoder(Object):
         IN.ACCT_VALUE: HandleInfo(wrap=EWrapper.updateAccountValue),
         IN.PORTFOLIO_VALUE: HandleInfo(proc=processPortfolioValueMsg),
         IN.ACCT_UPDATE_TIME: HandleInfo(wrap=EWrapper.updateAccountTime),
-        IN.NEXT_VALID_ID: HandleInfo(wrap=EWrapper.nextValidId, ),
+        IN.NEXT_VALID_ID: HandleInfo(
+            wrap=EWrapper.nextValidId,
+        ),
         IN.CONTRACT_DATA: HandleInfo(proc=processContractDataMsg),
         IN.EXECUTION_DATA: HandleInfo(proc=processExecutionDataMsg),
         IN.MARKET_DEPTH: HandleInfo(proc=processMarketDepthMsg),
@@ -1437,14 +1558,20 @@ class Decoder(Object):
         IN.VERIFY_COMPLETED: HandleInfo(wrap=EWrapper.verifyCompleted),
         IN.DISPLAY_GROUP_LIST: HandleInfo(wrap=EWrapper.displayGroupList),
         IN.DISPLAY_GROUP_UPDATED: HandleInfo(wrap=EWrapper.displayGroupUpdated),
-        IN.VERIFY_AND_AUTH_MESSAGE_API: HandleInfo(wrap=EWrapper.verifyAndAuthMessageAPI),
+        IN.VERIFY_AND_AUTH_MESSAGE_API: HandleInfo(
+            wrap=EWrapper.verifyAndAuthMessageAPI
+        ),
         IN.VERIFY_AND_AUTH_COMPLETED: HandleInfo(wrap=EWrapper.verifyAndAuthCompleted),
         IN.POSITION_MULTI: HandleInfo(proc=processPositionMultiMsg),
         IN.POSITION_MULTI_END: HandleInfo(wrap=EWrapper.positionMultiEnd),
         IN.ACCOUNT_UPDATE_MULTI: HandleInfo(wrap=EWrapper.accountUpdateMulti),
         IN.ACCOUNT_UPDATE_MULTI_END: HandleInfo(wrap=EWrapper.accountUpdateMultiEnd),
-        IN.SECURITY_DEFINITION_OPTION_PARAMETER: HandleInfo(proc=processSecurityDefinitionOptionParameterMsg),
-        IN.SECURITY_DEFINITION_OPTION_PARAMETER_END: HandleInfo(proc=processSecurityDefinitionOptionParameterEndMsg),
+        IN.SECURITY_DEFINITION_OPTION_PARAMETER: HandleInfo(
+            proc=processSecurityDefinitionOptionParameterMsg
+        ),
+        IN.SECURITY_DEFINITION_OPTION_PARAMETER_END: HandleInfo(
+            proc=processSecurityDefinitionOptionParameterEndMsg
+        ),
         IN.SOFT_DOLLAR_TIERS: HandleInfo(proc=processSoftDollarTiersMsg),
         IN.FAMILY_CODES: HandleInfo(proc=processFamilyCodesMsg),
         IN.SYMBOL_SAMPLES: HandleInfo(proc=processSymbolSamplesMsg),
@@ -1474,8 +1601,5 @@ class Decoder(Object):
         IN.WSH_META_DATA: HandleInfo(proc=processWshMetaDataMsg),
         IN.WSH_EVENT_DATA: HandleInfo(proc=processWshEventDataMsg),
         IN.HISTORICAL_SCHEDULE: HandleInfo(proc=processHistoricalSchedule),
-        IN.USER_INFO: HandleInfo(proc=processUserInfo)
-}
-
-
-
+        IN.USER_INFO: HandleInfo(proc=processUserInfo),
+    }

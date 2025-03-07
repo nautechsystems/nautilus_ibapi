@@ -13,16 +13,13 @@ class UtilsTestCase(unittest.TestCase):
     def setUp(self):
         pass
 
-
     def tearDown(self):
         pass
-
 
     def test_enum(self):
         e = Enum("ZERO", "ONE", "TWO")
         print(e.ZERO)
-        print(e.to_str(e.ZERO))
-
+        print(e.toStr(e.ZERO))
 
     def test_setattr_log(self):
         class A:
@@ -35,21 +32,22 @@ class UtilsTestCase(unittest.TestCase):
         a.n = 6
         print(a.n)
 
-
     def test_polymorphism(self):
         class A:
             def __init__(self):
                 self.n = 5
+
             def m(self):
                 self.n += 1
+
         class B(A):
             def m(self):
                 self.n += 2
 
         o = B()
-        #import code; code.interact(local=locals())
+        print(o)
+        # import code; code.interact(local=locals())
 
- 
+
 if "__main__" == __name__:
     unittest.main()
-              

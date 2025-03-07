@@ -12,9 +12,9 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
 class Enum:
     def __init__(self, *args):
         self.idx2name = {}
-        for (idx, name) in enumerate(args):
+        for idx, name in enumerate(args):
             setattr(self, name, idx)
             self.idx2name[idx] = name
 
-    def to_str(self, idx):
+    def toStr(self, idx):
         return self.idx2name.get(idx, "NOTFOUND")
