@@ -12,17 +12,14 @@ class EnumTestCase(unittest.TestCase):
     def setUp(self):
         pass
 
-
     def tearDown(self):
         pass
-
 
     def test_enum(self):
         e = Enum("ZERO", "ONE", "TWO")
         print(e.ZERO)
-        print(e.to_str(e.ZERO))
+        print(e.toStr(e.ZERO))
 
 
 if "__main__" == __name__:
     unittest.main()
-              

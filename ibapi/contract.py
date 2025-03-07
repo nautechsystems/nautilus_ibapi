@@ -1,23 +1,21 @@
 """
-Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
+Copyright (C) 2024 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
 
-
-"""
-	SAME_POS    = open/close leg value is same as combo
-	OPEN_POS    = open
-	CLOSE_POS   = close
-	UNKNOWN_POS = unknown
-"""
-
 from ibapi.object_implem import Object
-from ibapi.common import UNSET_DECIMAL
+from ibapi.const import UNSET_DECIMAL
 from ibapi.utils import intMaxString
 from ibapi.utils import floatMaxString
 from ibapi.utils import decimalMaxString
+from enum import Enum
 
-
+"""
+SAME_POS    = open/close leg value is same as combo
+OPEN_POS    = open
+CLOSE_POS   = close
+UNKNOWN_POS = unknown
+"""
 (SAME_POS, OPEN_POS, CLOSE_POS, UNKNOWN_POS) = range(4)
 
 
@@ -25,38 +23,39 @@ class ComboLeg(Object):
     def __init__(self):
         self.conId = 0  # type: int
         self.ratio = 0  # type: int
-        self.action = ""      # BUY/SELL/SSHORT
+        self.action = ""  # BUY/SELL/SHORT
         self.exchange = ""
-        self.openClose = 0   # type: int; LegOpenClose enum values
+        self.openClose = 0  # type: int # LegOpenClose enum values
         # for stock legs when doing short sale
         self.shortSaleSlot = 0
         self.designatedLocation = ""
         self.exemptCode = -1
 
-
     def __str__(self):
-        return ",".join((
-            intMaxString(self.conId),
-            intMaxString(self.ratio),
-            str(self.action),
-            str(self.exchange),
-            intMaxString(self.openClose),
-            intMaxString(self.shortSaleSlot),
-            str(self.designatedLocation),
-            intMaxString(self.exemptCode)))
+        return ",".join(
+            (
+                intMaxString(self.conId),
+                intMaxString(self.ratio),
+                str(self.action),
+                str(self.exchange),
+                intMaxString(self.openClose),
+                intMaxString(self.shortSaleSlot),
+                str(self.designatedLocation),
+                intMaxString(self.exemptCode),
+            )
+        )
 
 
 class DeltaNeutralContract(Object):
     def __init__(self):
-        self.conId = 0   # type: int
-        self.delta = 0.  # type: float
-        self.price = 0.  # type: float
+        self.conId = 0  # type: int
+        self.delta = 0.0  # type: float
+        self.price = 0.0  # type: float
 
     def __str__(self):
-        return ",".join((
-            str(self.conId),
-            floatMaxString(self.delta),
-            floatMaxString(self.price)))
+        return ",".join(
+            (str(self.conId), floatMaxString(self.delta), floatMaxString(self.price))
+        )
 
 
 class Contract(Object):
@@ -65,45 +64,52 @@ class Contract(Object):
         self.symbol = ""
         self.secType = ""
         self.lastTradeDateOrContractMonth = ""
-        self.strike = 0.  # float !!
+        self.lastTradeDate = ""
+        self.strike = 0.0  # float !!
         self.right = ""
         self.multiplier = ""
         self.exchange = ""
-        self.primaryExchange = "" # pick an actual (ie non-aggregate) exchange that the contract trades on.  DO NOT SET TO SMART.
+        self.primaryExchange = ""  # pick an actual (ie non-aggregate) exchange that the contract trades on.
+        # DO NOT SET TO SMART.
         self.currency = ""
         self.localSymbol = ""
         self.tradingClass = ""
         self.includeExpired = False
-        self.secIdType = ""	  # CUSIP;SEDOL;ISIN;RIC
+        self.secIdType = ""  # CUSIP;SEDOL;ISIN;RIC
         self.secId = ""
         self.description = ""
         self.issuerId = ""
 
-        #combos
-        self.comboLegsDescrip = ""  # type: str; received in open order 14 and up for all combos
-        self.comboLegs = None     # type: list<ComboLeg>
+        # combos
+        self.comboLegsDescrip = (
+            ""
+        )  # type: str #received in open order 14 and up for all combos
+        self.comboLegs = []  # type: list[ComboLeg]
         self.deltaNeutralContract = None
 
-
     def __str__(self):
-        s = ",".join((
-            str(self.conId),
-            str(self.symbol),
-            str(self.secType),
-            str(self.lastTradeDateOrContractMonth),
-            floatMaxString(self.strike),
-            str(self.right),
-            str(self.multiplier),
-            str(self.exchange),
-            str(self.primaryExchange),
-            str(self.currency),
-            str(self.localSymbol),
-            str(self.tradingClass),
-            str(self.includeExpired),
-            str(self.secIdType),
-            str(self.secId),
-            str(self.description),
-            str(self.issuerId)))
+        s = ",".join(
+            (
+                str(self.conId),
+                str(self.symbol),
+                str(self.secType),
+                str(self.lastTradeDateOrContractMonth),
+                str(self.lastTradeDate),
+                floatMaxString(self.strike),
+                str(self.right),
+                str(self.multiplier),
+                str(self.exchange),
+                str(self.primaryExchange),
+                str(self.currency),
+                str(self.localSymbol),
+                str(self.tradingClass),
+                str(self.includeExpired),
+                str(self.secIdType),
+                str(self.secId),
+                str(self.description),
+                str(self.issuerId),
+            )
+        )
         s += "combo:" + self.comboLegsDescrip
 
         if self.comboLegs:
@@ -120,7 +126,7 @@ class ContractDetails(Object):
     def __init__(self):
         self.contract = Contract()
         self.marketName = ""
-        self.minTick = 0.
+        self.minTick = 0.0
         self.orderTypes = ""
         self.validExchanges = ""
         self.priceMagnifier = 0
@@ -162,58 +168,111 @@ class ContractDetails(Object):
         self.nextOptionType = ""
         self.nextOptionPartial = False
         self.notes = ""
+        # FUND values
+        self.fundName = ""
+        self.fundFamily = ""
+        self.fundType = ""
+        self.fundFrontLoad = ""
+        self.fundBackLoad = ""
+        self.fundBackLoadTimeInterval = ""
+        self.fundManagementFee = ""
+        self.fundClosed = False
+        self.fundClosedForNewInvestors = False
+        self.fundClosedForNewMoney = False
+        self.fundNotifyAmount = ""
+        self.fundMinimumInitialPurchase = ""
+        self.fundSubsequentMinimumPurchase = ""
+        self.fundBlueSkyStates = ""
+        self.fundBlueSkyTerritories = ""
+        self.fundDistributionPolicyIndicator = FundDistributionPolicyIndicator.NoneItem
+        self.fundAssetType = FundAssetType.NoneItem
+        self.ineligibilityReasonList = None
 
     def __str__(self):
-        s = ",".join((
-            str(self.contract),
-            str(self.marketName),
-            floatMaxString(self.minTick),
-            str(self.orderTypes),
-            str(self.validExchanges),
-            intMaxString(self.priceMagnifier),
-            intMaxString(self.underConId),
-            str(self.longName),
-            str(self.contractMonth),
-            str(self.industry),
-            str(self.category),
-            str(self.subcategory),
-            str(self.timeZoneId),
-            str(self.tradingHours),
-            str(self.liquidHours),
-            str(self.evRule),
-            intMaxString(self.evMultiplier),
-            str(self.underSymbol),
-            str(self.underSecType),
-            str(self.marketRuleIds),
-            intMaxString(self.aggGroup),
-            str(self.secIdList),
-            str(self.realExpirationDate),
-            str(self.stockType),
-            str(self.cusip),
-            str(self.ratings),
-            str(self.descAppend),
-            str(self.bondType),
-            str(self.couponType),
-            str(self.callable),
-            str(self.putable),
-            str(self.coupon),
-            str(self.convertible),
-            str(self.maturity),
-            str(self.issueDate),
-            str(self.nextOptionDate),
-            str(self.nextOptionType),
-            str(self.nextOptionPartial),
-            str(self.notes),
-            decimalMaxString(self.minSize),
-            decimalMaxString(self.sizeIncrement),
-            decimalMaxString(self.suggestedSizeIncrement)))
-            
+        s = ",".join(
+            (
+                str(self.contract),
+                str(self.marketName),
+                floatMaxString(self.minTick),
+                str(self.orderTypes),
+                str(self.validExchanges),
+                intMaxString(self.priceMagnifier),
+                intMaxString(self.underConId),
+                str(self.longName),
+                str(self.contractMonth),
+                str(self.industry),
+                str(self.category),
+                str(self.subcategory),
+                str(self.timeZoneId),
+                str(self.tradingHours),
+                str(self.liquidHours),
+                str(self.evRule),
+                intMaxString(self.evMultiplier),
+                str(self.underSymbol),
+                str(self.underSecType),
+                str(self.marketRuleIds),
+                intMaxString(self.aggGroup),
+                str(self.secIdList),
+                str(self.realExpirationDate),
+                str(self.stockType),
+                str(self.cusip),
+                str(self.ratings),
+                str(self.descAppend),
+                str(self.bondType),
+                str(self.couponType),
+                str(self.callable),
+                str(self.putable),
+                str(self.coupon),
+                str(self.convertible),
+                str(self.maturity),
+                str(self.issueDate),
+                str(self.nextOptionDate),
+                str(self.nextOptionType),
+                str(self.nextOptionPartial),
+                str(self.notes),
+                decimalMaxString(self.minSize),
+                decimalMaxString(self.sizeIncrement),
+                decimalMaxString(self.suggestedSizeIncrement),
+                str(self.ineligibilityReasonList),
+            )
+        )
+
         return s
 
 
 class ContractDescription(Object):
     def __init__(self):
         self.contract = Contract()
-        self.derivativeSecTypes = None   # type: list of strings
+        self.derivativeSecTypes = []  # type: list[str]
 
+class FundAssetType(Enum):
+    NoneItem = ("None", "None")
+    Others = ("000", "Others"), 
+    MoneyMarket = ("001", "Money Market")
+    FixedIncome = ("002", "Fixed Income")
+    MultiAsset = ("003", "Multi-asset")
+    Equity = ("004", "Equity")
+    Sector = ("005", "Sector")
+    Guaranteed = ("006", "Guaranteed")
+    Alternative = ("007", "Alternative")
+
+class FundDistributionPolicyIndicator(Enum):
+    NoneItem = ("None", "None")
+    AccumulationFund = ("N", "Accumulation Fund")
+    IncomeFund = ("Y", "Income Fund")
+
+def listOfValues(cls):
+    return list(map(lambda c: c, cls))
+
+def getEnumTypeFromString(cls, stringIn):
+    for item in cls:
+        if item.value[0] == stringIn:
+            return item
+    return listOfValues(cls)[0]
+
+def getEnumTypeName(cls, valueIn):
+    for item in cls:
+        if item == valueIn:
+            return item.value[1]
+    return listOfValues(cls)[0].value[1]
 

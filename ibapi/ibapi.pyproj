@@ -25,6 +25,7 @@
     <Compile Include="commission_report.py" />
     <Compile Include="common.py" />
     <Compile Include="connection.py" />
+    <Compile Include="const.py" />
     <Compile Include="contract.py" />
     <Compile Include="decoder.py" />
     <Compile Include="enum_implem.py" />
@@ -35,6 +36,7 @@
     <Compile Include="object_implem.py" />
     <Compile Include="order.py" />
     <Compile Include="orderdecoder.py" />
+    <Compile Include="order_cancel.py" />
     <Compile Include="order_condition.py" />
     <Compile Include="order_state.py" />
     <Compile Include="reader.py" />

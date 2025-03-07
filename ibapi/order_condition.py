@@ -3,14 +3,14 @@ Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is su
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
 
-
 from ibapi import comm
-from ibapi.common import UNSET_DOUBLE
+from ibapi.const import UNSET_DOUBLE
 from ibapi.object_implem import Object
 from ibapi.enum_implem import Enum
 from ibapi.utils import decode
 
-#TODO: add support for Rebate, P/L, ShortableShares conditions 
+
+# TODO: add support for Rebate, P/L, ShortableShares conditions
 
 
 class OrderCondition(Object):
@@ -42,7 +42,7 @@ class OrderCondition(Object):
 
     def make_fields(self):
         return [comm.make_field("a" if self.isConjunctionConnection else "o")]
- 
+
     def __str__(self):
         return "<AND>" if self.isConjunctionConnection else "<OR>"
 
@@ -61,16 +61,24 @@ class ExecutionCondition(OrderCondition):
         self.symbol = decode(str, fields)
 
     def make_fields(self):
-        flds = OrderCondition.make_fields(self) + \
-            [comm.make_field(self.secType),
-            comm.make_field(self.exchange), 
-            comm.make_field(self.symbol)]
+        flds = OrderCondition.make_fields(self) + [
+            comm.make_field(self.secType),
+            comm.make_field(self.exchange),
+            comm.make_field(self.symbol),
+        ]
         return flds
- 
+
     def __str__(self):
-        return "trade occurs for " + self.symbol + " symbol on " + \
-            self.exchange + " exchange for " + self.secType + " security type"
-        
+        return (
+            "trade occurs for "
+            + self.symbol
+            + " symbol on "
+            + self.exchange
+            + " exchange for "
+            + self.secType
+            + " security type"
+        )
+
 
 class OperatorCondition(OrderCondition):
     def __init__(self, condType=None, isMore=None):
@@ -90,15 +98,15 @@ class OperatorCondition(OrderCondition):
         self.setValueFromString(text)
 
     def make_fields(self):
-        flds = OrderCondition.make_fields(self) + \
-            [comm.make_field(self.isMore),
-             comm.make_field(self.valueToString()), ]
-        return flds
+        return OrderCondition.make_fields(self) + [
+            comm.make_field(self.isMore),
+            comm.make_field(self.valueToString()),
+        ]
 
     def __str__(self):
         sb = ">= " if self.isMore else "<= "
-        return " %s %s" % (sb, self.valueToString())
- 
+        return f" {sb} {self.valueToString()}"
+
 
 class MarginCondition(OperatorCondition):
     def __init__(self, isMore=None, percent=None):
@@ -117,11 +125,10 @@ class MarginCondition(OperatorCondition):
 
     def setValueFromString(self, text: str) -> None:
         self.percent = float(text)
- 
+
     def __str__(self):
-        return "the margin cushion percent %s " % (
-            OperatorCondition.__str__(self))
- 
+        return f"the margin cushion percent {OperatorCondition.__str__(self)} "
+
 
 class ContractCondition(OperatorCondition):
     def __init__(self, condType=None, conId=None, exch=None, isMore=None):
@@ -135,15 +142,22 @@ class ContractCondition(OperatorCondition):
         self.exchange = decode(str, fields)
 
     def make_fields(self):
-        flds = OperatorCondition.make_fields(self) + \
-            [comm.make_field(self.conId),
-             comm.make_field(self.exchange), ]
-        return flds
+        return OperatorCondition.make_fields(self) + [
+            comm.make_field(self.conId),
+            comm.make_field(self.exchange),
+        ]
+
+    def valueToString(self) -> str:
+        # todo
+        pass
+
+    def setValueFromString(self, text: str) -> None:
+        # todo
+        pass
 
     def __str__(self):
-        return "%s on %s is %s " % (self.conId, self.exchange, 
-            OperatorCondition.__str__(self))
- 
+        return f"{self.conId} on {self.exchange} is {OperatorCondition.__str__(self)} "
+
 
 class TimeCondition(OperatorCondition):
     def __init__(self, isMore=None, time=None):
@@ -162,27 +176,28 @@ class TimeCondition(OperatorCondition):
 
     def setValueFromString(self, text: str) -> None:
         self.time = text
- 
-    def __str__(self):
-        return "time is %s " % (OperatorCondition.__str__(self))  
 
-                          
+    def __str__(self):
+        return f"time is {OperatorCondition.__str__(self)} "
+
+
 class PriceCondition(ContractCondition):
     TriggerMethodEnum = Enum(
-          "Default", # = 0,
-          "DoubleBidAsk", # = 1,
-          "Last", # = 2,
-          "DoubleLast", # = 3,
-          "BidAsk", # = 4,
-          "N/A1",
-          "N/A2",
-          "LastBidAsk", #= 7,
-          "MidPoint") #= 8
-     
-    def __init__(self, triggerMethod=None, conId=None, exch=None, isMore=None, 
-                 price=None):
-        ContractCondition.__init__(self, OrderCondition.Price, conId, exch, 
-                                   isMore)
+        "Default",  # = 0,
+        "DoubleBidAsk",  # = 1,
+        "Last",  # = 2,
+        "DoubleLast",  # = 3,
+        "BidAsk",  # = 4,
+        "N/A1",
+        "N/A2",
+        "LastBidAsk",  # = 7,
+        "MidPoint",
+    )  # = 8
+
+    def __init__(
+        self, triggerMethod=None, conId=None, exch=None, isMore=None, price=None
+    ):
+        ContractCondition.__init__(self, OrderCondition.Price, conId, exch, isMore)
         self.price = price
         self.triggerMethod = triggerMethod
 
@@ -191,8 +206,9 @@ class PriceCondition(ContractCondition):
         self.triggerMethod = decode(int, fields)
 
     def make_fields(self):
-        flds = ContractCondition.make_fields(self) + \
-            [comm.make_field(self.triggerMethod), ]
+        flds = ContractCondition.make_fields(self) + [
+            comm.make_field(self.triggerMethod),
+        ]
         return flds
 
     def valueToString(self) -> str:
@@ -200,18 +216,20 @@ class PriceCondition(ContractCondition):
 
     def setValueFromString(self, text: str) -> None:
         self.price = float(text)
- 
+
+    @property
     def __str__(self):
-        return "%s price of %s " % (
-            PriceCondition.TriggerMethodEnum.to_str(self.triggerMethod), 
-            ContractCondition.__str__(self))
+        return (
+            f"{PriceCondition.TriggerMethodEnum.toStr(self.triggerMethod)} "
+            f"price of {ContractCondition.__str__(self)} "
+        )
 
 
 class PercentChangeCondition(ContractCondition):
-    def __init__(self, conId=None, exch=None, isMore=None,
-                 changePercent=UNSET_DOUBLE):
-        ContractCondition.__init__(self, OrderCondition.PercentChange, conId,
-                                   exch, isMore)
+    def __init__(self, conId=None, exch=None, isMore=None, changePercent=UNSET_DOUBLE):
+        ContractCondition.__init__(
+            self, OrderCondition.PercentChange, conId, exch, isMore
+        )
         self.changePercent = changePercent
 
     def decode(self, fields):
@@ -228,14 +246,12 @@ class PercentChangeCondition(ContractCondition):
         self.changePercent = float(text)
 
     def __str__(self):
-        return "percent change of %s " % (
-            ContractCondition.__str__(self))
-  
+        return f"percent change of {ContractCondition.__str__(self)} "
+
 
 class VolumeCondition(ContractCondition):
     def __init__(self, conId=None, exch=None, isMore=None, volume=None):
-        ContractCondition.__init__(self, OrderCondition.Volume, conId, exch, 
-                                   isMore)
+        ContractCondition.__init__(self, OrderCondition.Volume, conId, exch, isMore)
         self.volume = volume
 
     def decode(self, fields):
@@ -252,9 +268,8 @@ class VolumeCondition(ContractCondition):
         self.volume = int(text)
 
     def __str__(self):
-        return "volume of %s " % (
-            ContractCondition.__str__(self))
- 
+        return f"volume of {ContractCondition.__str__(self)} "
+
 
 def Create(condType):
     cond = None

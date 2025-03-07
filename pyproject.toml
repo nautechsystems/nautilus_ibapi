@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "nautilus_ibapi"
-version = "10.19.04"
+version = "10.30.01"
 description="Python IB API"
 authors = ["IBG LLC <dnastase@interactivebrokers.com>"]
 readme = "README.md"
