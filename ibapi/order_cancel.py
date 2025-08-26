@@ -11,15 +11,11 @@ class OrderCancel(Object):
     def __init__(self):
         self.manualOrderCancelTime = ""
         self.extOperator = ""
-        self.externalUserId = ""
         self.manualOrderIndicator = UNSET_INTEGER
 
     def __str__(self):
-        s = "manualOrderCancelTime: %s, extOperator: %s, externalUserId: %s, manualOrderIndicator: %s" % (
-            self.manualOrderCancelTime,
-            self.extOperator,
-            self.externalUserId,
-            intMaxString(self.manualOrderIndicator),
+        s = "manualOrderCancelTime: %s, extOperator: %s, manualOrderIndicator: %s" % (
+            self.manualOrderCancelTime, self.extOperator, intMaxString(self.manualOrderIndicator)
         )
 
         return s

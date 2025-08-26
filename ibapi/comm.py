@@ -1,5 +1,5 @@
 """
-Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
+Copyright (C) 2025 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 
 This module has tools for implementing the IB low level messaging.
@@ -16,10 +16,24 @@ from ibapi.errors import INVALID_SYMBOL
 
 logger = logging.getLogger(__name__)
 
-
-def make_msg(text) -> bytes:
+def make_msg_proto(msgId: int, protobufData: bytes) -> bytes:
     """adds the length prefix"""
+    byteArray = msgId.to_bytes(4, 'big') + protobufData
+    msg = struct.pack(f"!I{len(byteArray)}s", len(byteArray), byteArray)
+    return msg
 
+def make_msg(msgId:int, useRawIntMsgId: bool, text: str) -> bytes:
+    """adds the length prefix"""
+    if useRawIntMsgId:
+        text = msgId.to_bytes(4, 'big') + str.encode(text)
+    else:
+        text = str.encode(make_field(msgId) + text)
+
+    msg = struct.pack(f"!I{len(text)}s", len(text), text)
+    return msg
+
+def make_initial_msg(text: str) -> bytes:
+    """adds the length prefix"""
     msg = struct.pack(f"!I{len(text)}s", len(text), str.encode(text))
     return msg
 

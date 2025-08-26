@@ -140,7 +140,7 @@ How the code is organized:
 * *Decoder*: knows how to take a low level message and decode into high level message
 * *Client*:
   + knows to send requests
-  + has the message loop which takes low level messages from Queue and uses Decoder to tranform into high level message with which it then calls the corresponding Wrapper method
+  + has the message loop which takes low level messages from Queue and uses Decoder to transform into high level message with which it then calls the corresponding Wrapper method
 * *Wrapper*: class that needs to be subclassed by the user so that it can get the incoming messages
 
 
@@ -163,7 +163,7 @@ The info/data flow is:
 
 Implementation notes:
 
-* the *Decoder* has two ways of handling a message (esentially decoding the fields)
+* the *Decoder* has two ways of handling a message (essentially decoding the fields)
     + some message very neatly map to a function call; meaning that the number of fields and order are the same as the method parameters. For example: Wrapper.tickSize(). In this case a simple mapping is made between the incoming msg id and the Wrapper method:
 
     IN.TICK_SIZE: HandleInfo(wrap=Wrapper.tickSize), 
