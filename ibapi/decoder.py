@@ -1,9 +1,10 @@
 """
-Copyright (C) 2024 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
+Copyright (C) 2025 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
 from ibapi.const import NO_VALID_ID
-from ibapi.contract import getEnumTypeFromString
+from ibapi.utils import getEnumTypeFromString
+from ibapi.common import PROTOBUF_MSG_ID
 
 """
 The Decoder knows how to transform a message's payload into higher level
@@ -27,6 +28,14 @@ from ibapi.orderdecoder import OrderDecoder
 from ibapi.contract import FundDistributionPolicyIndicator
 from ibapi.contract import FundAssetType
 from ibapi.ineligibility_reason import IneligibilityReason
+from ibapi.decoder_utils import decodeContract, decodeOrder, decodeExecution, decodeOrderState
+
+from ibapi.protobuf.OrderStatus_pb2 import OrderStatus as OrderStatusProto
+from ibapi.protobuf.OpenOrder_pb2 import OpenOrder as OpenOrderProto
+from ibapi.protobuf.OpenOrdersEnd_pb2 import OpenOrdersEnd as OpenOrdersEndProto
+from ibapi.protobuf.ErrorMessage_pb2 import ErrorMessage as ErrorMessageProto
+from ibapi.protobuf.ExecutionDetails_pb2 import ExecutionDetails as ExecutionDetailsProto
+from ibapi.protobuf.ExecutionDetailsEnd_pb2 import ExecutionDetailsEnd as ExecutionDetailsEndProto
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +60,6 @@ class Decoder(Object):
         self.discoverParams()
 
     def processTickPriceMsg(self, fields):
-        next(fields)
         decode(int, fields)
 
         reqId = decode(int, fields)
@@ -91,7 +99,6 @@ class Decoder(Object):
             self.wrapper.tickSize(reqId, sizeTickType, size)
 
     def processTickSizeMsg(self, fields):
-        next(fields)
         decode(int, fields)
 
         reqId = decode(int, fields)
@@ -102,7 +109,6 @@ class Decoder(Object):
             self.wrapper.tickSize(reqId, sizeTickType, size)
 
     def processOrderStatusMsg(self, fields):
-        next(fields)
         if self.serverVersion < MIN_SERVER_VER_MARKET_CAP_PRICE:
             decode(int, fields)
         orderId = decode(int, fields)
@@ -136,9 +142,27 @@ class Decoder(Object):
             mktCapPrice,
         )
 
-    def processOpenOrder(self, fields):
-        next(fields)
+    def processOrderStatusMsgProtoBuf(self, protobuf):
+        orderStatusProto = OrderStatusProto()
+        orderStatusProto.ParseFromString(protobuf)
 
+        self.wrapper.orderStatusProtoBuf(orderStatusProto)
+
+        orderId = orderStatusProto.orderId if orderStatusProto.HasField('orderId') else UNSET_INTEGER
+        status = orderStatusProto.status if orderStatusProto.HasField('status') else ""
+        filled = orderStatusProto.filled if orderStatusProto.HasField('filled') else UNSET_DECIMAL
+        remaining = orderStatusProto.remaining if orderStatusProto.HasField('remaining') else UNSET_DECIMAL
+        avgFillPrice = orderStatusProto.avgFillPrice if orderStatusProto.HasField('avgFillPrice') else UNSET_DOUBLE
+        permId = orderStatusProto.permId if orderStatusProto.HasField('permId') else UNSET_LONG
+        parentId = orderStatusProto.parentId if orderStatusProto.HasField('parentId') else UNSET_INTEGER
+        lastFillPrice = orderStatusProto.lastFillPrice if orderStatusProto.HasField('lastFillPrice') else UNSET_DOUBLE
+        clientId = orderStatusProto.clientId if orderStatusProto.HasField('clientId') else UNSET_INTEGER
+        whyHeld = orderStatusProto.whyHeld if orderStatusProto.HasField('whyHeld') else ""
+        mktCapPrice = orderStatusProto.mktCapPrice if orderStatusProto.HasField('mktCapPrice') else UNSET_DOUBLE
+
+        self.wrapper.orderStatus(orderId, status, filled, remaining, avgFillPrice, permId, parentId, lastFillPrice, clientId, whyHeld, mktCapPrice)
+
+    def processOpenOrder(self, fields):
         order = Order()
         contract = Contract()
         orderState = OrderState()
@@ -211,7 +235,7 @@ class Decoder(Object):
         OrderDecoder.decodeDeltaNeutral(self, fields)
         OrderDecoder.decodeAlgoParams(self, fields)
         OrderDecoder.decodeSolicited(self, fields)
-        OrderDecoder.decodeWhatIfInfoAndCommission(self, fields)
+        OrderDecoder.decodeWhatIfInfoAndCommissionAndFees(self, fields)
         OrderDecoder.decodeVolRandomizeFlags(self, fields)
         OrderDecoder.decodePegToBenchParams(self, fields)
         OrderDecoder.decodeConditions(self, fields)
@@ -231,11 +255,49 @@ class Decoder(Object):
         OrderDecoder.decodeCustomerAccount(self, fields)
         OrderDecoder.decodeProfessionalCustomer(self, fields)
         OrderDecoder.decodeBondAccruedInterest(self, fields)
+        OrderDecoder.decodeIncludeOvernight(self, fields)
+        OrderDecoder.decodeCMETaggingFields(self, fields)
+        OrderDecoder.decodeSubmitter(self, fields)
+        OrderDecoder.decodeImbalanceOnly(
+            self, fields, MIN_SERVER_VER_IMBALANCE_ONLY
+        )
 
         self.wrapper.openOrder(order.orderId, contract, order, orderState)
 
+    def processOpenOrderMsgProtoBuf(self, protobuf):
+        openOrderProto = OpenOrderProto()
+        openOrderProto.ParseFromString(protobuf)
+
+        self.wrapper.openOrderProtoBuf(openOrderProto)
+
+        orderId = openOrderProto.orderId if openOrderProto.HasField('orderId') else 0
+
+        # decode contract fields
+        if not openOrderProto.HasField('contract'):
+            return
+        contract = decodeContract(openOrderProto.contract)
+
+        # decode order fields
+        if not openOrderProto.HasField('order'):
+            return
+        order = decodeOrder(openOrderProto.contract, openOrderProto.order)
+        
+        # decode order state fields
+        if not openOrderProto.HasField('orderState'):
+            return
+        orderState = decodeOrderState(openOrderProto.orderState)
+
+        self.wrapper.openOrder(orderId, contract, order, orderState);
+
+    def processOpenOrdersEndMsgProtoBuf(self, protobuf):
+        openOrdersEndProto = OpenOrdersEndProto()
+        openOrdersEndProto.ParseFromString(protobuf)
+
+        self.wrapper.openOrdersEndProtoBuf(openOrdersEndProto)
+
+        self.wrapper.openOrderEnd()
+
     def processPortfolioValueMsg(self, fields):
-        next(fields)
         version = decode(int, fields)
 
         # read contract fields
@@ -281,7 +343,6 @@ class Decoder(Object):
         )
 
     def processContractDataMsg(self, fields):
-        next(fields)
         version = 8
         if self.serverVersion < MIN_SERVER_VER_SIZE_RULES:
             version = decode(int, fields)
@@ -406,7 +467,6 @@ class Decoder(Object):
         self.wrapper.contractDetails(reqId, contract)
 
     def processBondContractDataMsg(self, fields):
-        next(fields)
         version = 6
         if self.serverVersion < MIN_SERVER_VER_SIZE_RULES:
             version = decode(int, fields)
@@ -448,6 +508,10 @@ class Decoder(Object):
         contract.notes = decode(str, fields)  # ver 2 field
         if version >= 4:
             contract.longName = decode(str, fields)
+        if self.serverVersion >= MIN_SERVER_VER_BOND_TRADING_HOURS:
+            contract.timeZoneId = decode(str, fields)
+            contract.tradingHours = decode(str, fields)
+            contract.liquidHours = decode(str, fields)
         if version >= 6:
             contract.evRule = decode(str, fields)
             contract.evMultiplier = decode(int, fields)
@@ -475,7 +539,6 @@ class Decoder(Object):
         self.wrapper.bondContractDetails(reqId, contract)
 
     def processScannerDataMsg(self, fields):
-        next(fields)
         decode(int, fields)
         reqId = decode(int, fields)
 
@@ -514,7 +577,6 @@ class Decoder(Object):
         self.wrapper.scannerDataEnd(reqId)
 
     def processExecutionDataMsg(self, fields):
-        next(fields)
         version = self.serverVersion
 
         if self.serverVersion < MIN_SERVER_VER_LAST_LIQUIDITY:
@@ -572,18 +634,50 @@ class Decoder(Object):
             execution.lastLiquidity = decode(int, fields)
         if self.serverVersion >= MIN_SERVER_VER_PENDING_PRICE_REVISION:
             execution.pendingPriceRevision = decode(bool, fields)
+        if self.serverVersion >= MIN_SERVER_VER_SUBMITTER:
+            execution.submitter = decode(str, fields)
+
+        self.wrapper.execDetails(reqId, contract, execution)
+
+    def processExecutionDataEndMsgProtoBuf(self, protobuf):
+        executionDetailsEndProto = ExecutionDetailsEndProto()
+        executionDetailsEndProto.ParseFromString(protobuf)
+
+        self.wrapper.executionDetailsEndProtoBuf(executionDetailsEndProto)
+
+        reqId = executionDetailsEndProto.reqId if executionDetailsEndProto.HasField('reqId') else 0
+
+        self.wrapper.execDetailsEnd(reqId)
+
+    def processExecutionDataMsgProtoBuf(self, protobuf):
+        executionDetailsProto = ExecutionDetailsProto()
+        executionDetailsProto.ParseFromString(protobuf)
+
+        self.wrapper.executionDetailsProtoBuf(executionDetailsProto)
+
+        reqId = executionDetailsProto.reqId if executionDetailsProto.HasField('reqId') else 0
+
+        # decode contract fields
+        if not executionDetailsProto.HasField('contract'):
+            return
+        contract = decodeContract(executionDetailsProto.contract)
+
+        # decode execution fields
+        if not executionDetailsProto.HasField('execution'):
+            return
+        execution = decodeExecution(executionDetailsProto.execution)
 
         self.wrapper.execDetails(reqId, contract, execution)
 
     def processHistoricalDataMsg(self, fields):
-        next(fields)
-
         if self.serverVersion < MIN_SERVER_VER_SYNT_REALTIME_BARS:
             decode(int, fields)
 
         reqId = decode(int, fields)
-        startDateStr = decode(str, fields)  # ver 2 field
-        endDateStr = decode(str, fields)  # ver 2 field
+        
+        if self.serverVersion < MIN_SERVER_VER_HISTORICAL_DATA_END:
+            startDateStr = decode(str, fields)  # ver 2 field
+            endDateStr = decode(str, fields)  # ver 2 field
 
         itemCount = decode(int, fields)
 
@@ -604,11 +698,19 @@ class Decoder(Object):
 
             self.wrapper.historicalData(reqId, bar)
 
-        # send end of dataset marker
+        if self.serverVersion < MIN_SERVER_VER_HISTORICAL_DATA_END:
+            # send end of dataset marker
+            self.wrapper.historicalDataEnd(reqId, startDateStr, endDateStr)
+
+
+    def processHistoricalDataEndMsg(self, fields):
+        reqId = decode(int, fields)
+        startDateStr = decode(str, fields)
+        endDateStr = decode(str, fields)
+        
         self.wrapper.historicalDataEnd(reqId, startDateStr, endDateStr)
 
     def processHistoricalDataUpdateMsg(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         bar = BarData()
         bar.barCount = decode(int, fields)
@@ -622,7 +724,6 @@ class Decoder(Object):
         self.wrapper.historicalDataUpdate(reqId, bar)
 
     def processRealTimeBarMsg(self, fields):
-        next(fields)
         decode(int, fields)
         reqId = decode(int, fields)
 
@@ -658,7 +759,6 @@ class Decoder(Object):
         theta = None
         undPrice = None
 
-        next(fields)
         if self.serverVersion < MIN_SERVER_VER_PRICE_BASED_VOLATILITY:
             version = decode(int, fields)
 
@@ -719,7 +819,6 @@ class Decoder(Object):
         )
 
     def processDeltaNeutralValidationMsg(self, fields):
-        next(fields)
         decode(int, fields)
         reqId = decode(int, fields)
 
@@ -732,29 +831,26 @@ class Decoder(Object):
         self.wrapper.deltaNeutralValidation(reqId, deltaNeutralContract)
 
     def processMarketDataTypeMsg(self, fields):
-        next(fields)
         decode(int, fields)
         reqId = decode(int, fields)
         marketDataType = decode(int, fields)
 
         self.wrapper.marketDataType(reqId, marketDataType)
 
-    def processCommissionReportMsg(self, fields):
-        next(fields)
+    def processCommissionAndFeesReportMsg(self, fields):
         decode(int, fields)
 
-        commissionReport = CommissionReport()
-        commissionReport.execId = decode(str, fields)
-        commissionReport.commission = decode(float, fields)
-        commissionReport.currency = decode(str, fields)
-        commissionReport.realizedPNL = decode(float, fields)
-        commissionReport.yield_ = decode(float, fields)
-        commissionReport.yieldRedemptionDate = decode(int, fields)
+        commissionAndFeesReport = CommissionAndFeesReport()
+        commissionAndFeesReport.execId = decode(str, fields)
+        commissionAndFeesReport.commissionAndFees = decode(float, fields)
+        commissionAndFeesReport.currency = decode(str, fields)
+        commissionAndFeesReport.realizedPNL = decode(float, fields)
+        commissionAndFeesReport.yield_ = decode(float, fields)
+        commissionAndFeesReport.yieldRedemptionDate = decode(int, fields)
 
-        self.wrapper.commissionReport(commissionReport)
+        self.wrapper.commissionAndFeesReport(commissionAndFeesReport)
 
     def processPositionDataMsg(self, fields):
-        next(fields)
         version = decode(int, fields)
 
         account = decode(str, fields)
@@ -783,7 +879,6 @@ class Decoder(Object):
         self.wrapper.position(account, contract, position, avgCost)
 
     def processPositionMultiMsg(self, fields):
-        next(fields)
         decode(int, fields)
         reqId = decode(int, fields)
         account = decode(str, fields)
@@ -810,8 +905,6 @@ class Decoder(Object):
         )
 
     def processSecurityDefinitionOptionParameterMsg(self, fields):
-        next(fields)
-
         reqId = decode(int, fields)
         exchange = decode(str, fields)
         underlyingConId = decode(int, fields)
@@ -841,14 +934,10 @@ class Decoder(Object):
         )
 
     def processSecurityDefinitionOptionParameterEndMsg(self, fields):
-        next(fields)
-
         reqId = decode(int, fields)
         self.wrapper.securityDefinitionOptionParameterEnd(reqId)
 
     def processSoftDollarTiersMsg(self, fields):
-        next(fields)
-
         reqId = decode(int, fields)
         nTiers = decode(int, fields)
 
@@ -863,8 +952,6 @@ class Decoder(Object):
         self.wrapper.softDollarTiers(reqId, tiers)
 
     def processFamilyCodesMsg(self, fields):
-        next(fields)
-
         nFamilyCodes = decode(int, fields)
         familyCodes = []
         for _ in range(nFamilyCodes):
@@ -876,8 +963,6 @@ class Decoder(Object):
         self.wrapper.familyCodes(familyCodes)
 
     def processSymbolSamplesMsg(self, fields):
-        next(fields)
-
         reqId = decode(int, fields)
         nContractDescriptions = decode(int, fields)
         contractDescriptions = []
@@ -903,7 +988,6 @@ class Decoder(Object):
         self.wrapper.symbolSamples(reqId, contractDescriptions)
 
     def processSmartComponents(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         n = decode(int, fields)
 
@@ -918,7 +1002,6 @@ class Decoder(Object):
         self.wrapper.smartComponents(reqId, smartComponentMap)
 
     def processTickReqParams(self, fields):
-        next(fields)
         tickerId = decode(int, fields)
         minTick = decode(float, fields)
         bboExchange = decode(str, fields)
@@ -926,7 +1009,6 @@ class Decoder(Object):
         self.wrapper.tickReqParams(tickerId, minTick, bboExchange, snapshotPermissions)
 
     def processMktDepthExchanges(self, fields):
-        next(fields)
         depthMktDataDescriptions = []
         nDepthMktDataDescriptions = decode(int, fields)
 
@@ -946,13 +1028,11 @@ class Decoder(Object):
         self.wrapper.mktDepthExchanges(depthMktDataDescriptions)
 
     def processHeadTimestamp(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         headTimestamp = decode(str, fields)
         self.wrapper.headTimestamp(reqId, headTimestamp)
 
     def processTickNews(self, fields):
-        next(fields)
         tickerId = decode(int, fields)
         timeStamp = decode(int, fields)
         providerCode = decode(str, fields)
@@ -964,7 +1044,6 @@ class Decoder(Object):
         )
 
     def processNewsProviders(self, fields):
-        next(fields)
         newsProviders = []
         nNewsProviders = decode(int, fields)
         if nNewsProviders > 0:
@@ -977,14 +1056,12 @@ class Decoder(Object):
         self.wrapper.newsProviders(newsProviders)
 
     def processNewsArticle(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         articleType = decode(int, fields)
         articleText = decode(str, fields)
         self.wrapper.newsArticle(reqId, articleType, articleText)
 
     def processHistoricalNews(self, fields):
-        next(fields)
         requestId = decode(int, fields)
         time = decode(str, fields)
         providerCode = decode(str, fields)
@@ -993,13 +1070,11 @@ class Decoder(Object):
         self.wrapper.historicalNews(requestId, time, providerCode, articleId, headline)
 
     def processHistoricalNewsEnd(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         hasMore = decode(bool, fields)
         self.wrapper.historicalNewsEnd(reqId, hasMore)
 
     def processHistogramData(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         numPoints = decode(int, fields)
 
@@ -1013,7 +1088,6 @@ class Decoder(Object):
         self.wrapper.histogramData(reqId, histogram)
 
     def processRerouteMktDataReq(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         conId = decode(int, fields)
         exchange = decode(str, fields)
@@ -1021,7 +1095,6 @@ class Decoder(Object):
         self.wrapper.rerouteMktDataReq(reqId, conId, exchange)
 
     def processRerouteMktDepthReq(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         conId = decode(int, fields)
         exchange = decode(str, fields)
@@ -1029,7 +1102,6 @@ class Decoder(Object):
         self.wrapper.rerouteMktDepthReq(reqId, conId, exchange)
 
     def processMarketRuleMsg(self, fields):
-        next(fields)
         marketRuleId = decode(int, fields)
 
         nPriceIncrements = decode(int, fields)
@@ -1045,7 +1117,6 @@ class Decoder(Object):
         self.wrapper.marketRule(marketRuleId, priceIncrements)
 
     def processPnLMsg(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         dailyPnL = decode(float, fields)
         unrealizedPnL = None
@@ -1060,7 +1131,6 @@ class Decoder(Object):
         self.wrapper.pnl(reqId, dailyPnL, unrealizedPnL, realizedPnL)
 
     def processPnLSingleMsg(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         pos = decode(Decimal, fields)
         dailyPnL = decode(float, fields)
@@ -1078,7 +1148,6 @@ class Decoder(Object):
         self.wrapper.pnlSingle(reqId, pos, dailyPnL, unrealizedPnL, realizedPnL, value)
 
     def processHistoricalTicks(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         tickCount = decode(int, fields)
 
@@ -1097,7 +1166,6 @@ class Decoder(Object):
         self.wrapper.historicalTicks(reqId, ticks, done)
 
     def processHistoricalTicksBidAsk(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         tickCount = decode(int, fields)
 
@@ -1122,7 +1190,6 @@ class Decoder(Object):
         self.wrapper.historicalTicksBidAsk(reqId, ticks, done)
 
     def processHistoricalTicksLast(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         tickCount = decode(int, fields)
 
@@ -1147,7 +1214,6 @@ class Decoder(Object):
         self.wrapper.historicalTicksLast(reqId, ticks, done)
 
     def processTickByTickMsg(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         tickType = decode(int, fields)
         time = decode(int, fields)
@@ -1198,15 +1264,13 @@ class Decoder(Object):
             self.wrapper.tickByTickMidPoint(reqId, time, midPoint)
 
     def processOrderBoundMsg(self, fields):
-        next(fields)
-        reqId = decode(int, fields)
-        apiClientId = decode(int, fields)
-        apiOrderId = decode(int, fields)
+        permId = decode(int, fields)
+        clientId = decode(int, fields)
+        orderId = decode(int, fields)
 
-        self.wrapper.orderBound(reqId, apiClientId, apiOrderId)
+        self.wrapper.orderBound(permId, clientId, orderId)
 
     def processMarketDepthMsg(self, fields):
-        next(fields)
         decode(int, fields)
         reqId = decode(int, fields)
 
@@ -1219,7 +1283,6 @@ class Decoder(Object):
         self.wrapper.updateMktDepth(reqId, position, operation, side, price, size)
 
     def processMarketDepthL2Msg(self, fields):
-        next(fields)
         decode(int, fields)
         reqId = decode(int, fields)
 
@@ -1239,8 +1302,6 @@ class Decoder(Object):
         )
 
     def processCompletedOrderMsg(self, fields):
-        next(fields)
-
         order = Order()
         contract = Contract()
         orderState = OrderState()
@@ -1316,37 +1377,32 @@ class Decoder(Object):
         OrderDecoder.decodePegBestPegMidOrderAttributes(self, fields)
         OrderDecoder.decodeCustomerAccount(self, fields)
         OrderDecoder.decodeProfessionalCustomer(self, fields)
+        OrderDecoder.decodeSubmitter(self, fields)
 
         self.wrapper.completedOrder(contract, order, orderState)
 
     def processCompletedOrdersEndMsg(self, fields):
-        next(fields)
-
         self.wrapper.completedOrdersEnd()
 
     def processReplaceFAEndMsg(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         text = decode(str, fields)
 
         self.wrapper.replaceFAEnd(reqId, text)
 
     def processWshMetaDataMsg(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         dataJson = decode(str, fields)
 
         self.wrapper.wshMetaData(reqId, dataJson)
 
     def processWshEventDataMsg(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         dataJson = decode(str, fields)
 
         self.wrapper.wshEventData(reqId, dataJson)
 
     def processHistoricalSchedule(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         startDateTime = decode(str, fields)
         endDateTime = decode(str, fields)
@@ -1367,15 +1423,19 @@ class Decoder(Object):
         )
 
     def processUserInfo(self, fields):
-        next(fields)
         reqId = decode(int, fields)
         whiteBrandingId = decode(str, fields)
 
         self.wrapper.userInfo(reqId, whiteBrandingId)
 
+    def processCurrentTimeInMillis(self, fields):
+        timeInMillis = decode(int, fields)
+
+        self.wrapper.currentTimeInMillis(timeInMillis)
+
     def processErrorMsg(self, fields):
-        next(fields)
-        decode(int, fields)
+        if self.serverVersion < MIN_SERVER_VER_ERROR_TIME:
+            decode(int, fields)
         reqId = decode(TickerId, fields)
         errorCode = decode(int, fields)
         errorString = decode(
@@ -1384,8 +1444,25 @@ class Decoder(Object):
         advancedOrderRejectJson = ""
         if self.serverVersion >= MIN_SERVER_VER_ADVANCED_ORDER_REJECT:
             advancedOrderRejectJson = decode(str, fields, False, True)
+        errorTime = 0
+        if self.serverVersion >= MIN_SERVER_VER_ERROR_TIME:
+            errorTime = decode(int, fields)
 
-        self.wrapper.error(reqId, errorCode, errorString, advancedOrderRejectJson)
+        self.wrapper.error(reqId, errorTime, errorCode, errorString, advancedOrderRejectJson)
+
+    def processErrorMsgProtoBuf(self, protobuf):
+        errorMessageProto = ErrorMessageProto()
+        errorMessageProto.ParseFromString(protobuf)
+
+        self.wrapper.errorProtoBuf(errorMessageProto)
+
+        reqId = errorMessageProto.id if errorMessageProto.HasField('id') else 0
+        errorCode = errorMessageProto.errorCode if errorMessageProto.HasField('errorCode') else 0
+        errorMsg = errorMessageProto.errorMsg if errorMessageProto.HasField('errorMsg') else ""
+        advancedOrderRejectJson = errorMessageProto.advancedOrderRejectJson if errorMessageProto.HasField('advancedOrderRejectJson') else ""
+        errorTime = errorMessageProto.errorTime if errorMessageProto.HasField('errorTime') else 0
+
+        self.wrapper.error(reqId, errorTime, errorCode, errorMsg, advancedOrderRejectJson)
 
     ######################################################################
 
@@ -1393,21 +1470,21 @@ class Decoder(Object):
         lastTradeDateOrContractMonth = decode(str, fields)
         if lastTradeDateOrContractMonth is not None:
             if "-" in lastTradeDateOrContractMonth:
-                splitted = lastTradeDateOrContractMonth.split("-")
+                split = lastTradeDateOrContractMonth.split("-")
             else:
-                splitted = lastTradeDateOrContractMonth.split()
+                split = lastTradeDateOrContractMonth.split()
 
-            if len(splitted) > 0:
+            if len(split) > 0:
                 if isBond:
-                    contract.maturity = splitted[0]
+                    contract.maturity = split[0]
                 else:
-                    contract.contract.lastTradeDateOrContractMonth = splitted[0]
+                    contract.contract.lastTradeDateOrContractMonth = split[0]
 
-            if len(splitted) > 1:
-                contract.lastTradeTime = splitted[1]
+            if len(split) > 1:
+                contract.lastTradeTime = split[1]
 
-            if isBond and len(splitted) > 2:
-                contract.timeZoneId = splitted[2]
+            if isBond and len(split) > 2:
+                contract.timeZoneId = split[2]
 
     ######################################################################
 
@@ -1442,7 +1519,7 @@ class Decoder(Object):
             logger.debug("%s: no param info in %s", fields, handleInfo)
             return
 
-        nIgnoreFields = 2  # bypass msgId and versionId faster this way
+        nIgnoreFields = 1  # bypass msgId faster this way
         if len(fields) - nIgnoreFields != len(handleInfo.wrapperParams) - 1:
             logger.error(
                 "diff len fields and params %d %d for fields: %s and handleInfo: %s",
@@ -1484,18 +1561,15 @@ class Decoder(Object):
         logger.debug("calling %s with %s %s", method, self.wrapper, args)
         method(*args)
 
-    def interpret(self, fields):
-        if len(fields) == 0:
-            logger.debug("no fields")
+    def interpret(self, fields, msgId):
+        if msgId == 0:
+            logger.debug("Unset message id:%d", msgId)
             return
 
-        sMsgId = fields[0]
-        nMsgId = int(sMsgId)
-
-        handleInfo = self.msgId2handleInfo.get(nMsgId, None)
+        handleInfo = self.msgId2handleInfo.get(msgId, None)
 
         if handleInfo is None:
-            logger.debug("%s: no handleInfo", fields)
+            logger.debug("msgId:%d - %s: no handleInfo", fields)
             return
 
         try:
@@ -1507,7 +1581,28 @@ class Decoder(Object):
         except BadMessage:
             theBadMsg = ",".join(fields)
             self.wrapper.error(
-                NO_VALID_ID, BAD_MESSAGE.code(), BAD_MESSAGE.msg() + theBadMsg
+                NO_VALID_ID, currentTimeMillis(), BAD_MESSAGE.code(), BAD_MESSAGE.msg() + theBadMsg
+            )
+            raise
+
+    def processProtoBuf(self, protoBuf, msgId):
+        if msgId == 0:
+            logger.debug("Unset message id:%d", msgId)
+            return
+
+        handleInfo = self.msgId2handleInfoProtoBuf.get(msgId, None)
+
+        if handleInfo is None:
+            logger.debug("msgId:%d - %s: no handleInfo for protobuf", msgId, protoBuf)
+            return
+
+        try:
+            if handleInfo.processMeth is not None:
+                handleInfo.processMeth(self, protoBuf)
+        except BadMessage:
+            theBadMsg = ",".join(protoBuf)
+            self.wrapper.error(
+                NO_VALID_ID, currentTimeMillis(), BAD_MESSAGE.code(), BAD_MESSAGE.msg() + theBadMsg
             )
             raise
 
@@ -1549,7 +1644,7 @@ class Decoder(Object):
         IN.DELTA_NEUTRAL_VALIDATION: HandleInfo(proc=processDeltaNeutralValidationMsg),
         IN.TICK_SNAPSHOT_END: HandleInfo(wrap=EWrapper.tickSnapshotEnd),
         IN.MARKET_DATA_TYPE: HandleInfo(wrap=EWrapper.marketDataType),
-        IN.COMMISSION_REPORT: HandleInfo(proc=processCommissionReportMsg),
+        IN.COMMISSION_AND_FEES_REPORT: HandleInfo(proc=processCommissionAndFeesReportMsg),
         IN.POSITION_DATA: HandleInfo(proc=processPositionDataMsg),
         IN.POSITION_END: HandleInfo(wrap=EWrapper.positionEnd),
         IN.ACCOUNT_SUMMARY: HandleInfo(wrap=EWrapper.accountSummary),
@@ -1602,4 +1697,15 @@ class Decoder(Object):
         IN.WSH_EVENT_DATA: HandleInfo(proc=processWshEventDataMsg),
         IN.HISTORICAL_SCHEDULE: HandleInfo(proc=processHistoricalSchedule),
         IN.USER_INFO: HandleInfo(proc=processUserInfo),
+        IN.HISTORICAL_DATA_END: HandleInfo(proc=processHistoricalDataEndMsg),
+        IN.CURRENT_TIME_IN_MILLIS: HandleInfo(proc=processCurrentTimeInMillis),
+    }
+
+    msgId2handleInfoProtoBuf = {
+        IN.ORDER_STATUS: HandleInfo(proc=processOrderStatusMsgProtoBuf),
+        IN.ERR_MSG: HandleInfo(proc=processErrorMsgProtoBuf),
+        IN.OPEN_ORDER: HandleInfo(proc=processOpenOrderMsgProtoBuf),
+        IN.EXECUTION_DATA: HandleInfo(proc=processExecutionDataMsgProtoBuf),
+        IN.OPEN_ORDER_END: HandleInfo(proc=processOpenOrdersEndMsgProtoBuf),
+        IN.EXECUTION_DATA_END: HandleInfo(proc=processExecutionDataEndMsgProtoBuf),
     }

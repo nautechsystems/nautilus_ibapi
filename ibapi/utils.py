@@ -1,11 +1,13 @@
 """
-Copyright (C) 2024 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
+Copyright (C) 2025 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
 
 import sys
 import logging
 import inspect
+import time
+import datetime
 
 from decimal import Decimal
 
@@ -97,6 +99,7 @@ def decode(the_type, fields, show_unset=False, use_unicode=False):
             or s.decode() == "2147483647"
             or s.decode() == "9223372036854775807"
             or s.decode() == "1.7976931348623157E308"
+            or s.decode() == "-9223372036854775808"
         ):
             return UNSET_DECIMAL
         return the_type(s.decode())
@@ -151,8 +154,21 @@ def ExerciseStaticMethods(klass):
             print(var())
             print()
 
+def isValidFloatValue(val: float) -> bool:
+	return val != UNSET_DOUBLE
+
+def isValidIntValue(val: int) -> bool:
+    return val != UNSET_INTEGER
+
+def isValidLongValue(val: int) -> bool:
+    return val != UNSET_LONG
+
+def isValidDecimalValue(val: Decimal) -> bool:
+    return val != UNSET_DECIMAL
 
 def floatMaxString(val: float):
+    if val is None:
+        return ""
     return (
         f"{val:.8f}".rstrip("0").rstrip(".").rstrip(",") if val != UNSET_DOUBLE else ""
     )
@@ -171,6 +187,7 @@ def isAsciiPrintable(val):
 
 
 def decimalMaxString(val: Decimal):
+    val = Decimal(val)
     return f"{val:f}" if val != UNSET_DECIMAL else ""
 
 
@@ -192,3 +209,25 @@ def log_(func, params, action):
             params = dict(params)
             del params["self"]
         logger.info(f"{action} {func} {params}")
+
+def currentTimeMillis() :
+    return round(time.time() * 1000)
+
+def getTimeStrFromMillis(time: int):
+    return datetime.datetime.fromtimestamp(time / 1000.0).strftime("%b %d, %Y %H:%M:%S.%f")[:-3] if time > 0 else ""
+
+def listOfValues(cls):
+    return list(map(lambda c: c, cls))
+
+def getEnumTypeFromString(cls, stringIn):
+    for item in cls:
+        if item.value[0] == stringIn:
+            return item
+    return listOfValues(cls)[0]
+
+def getEnumTypeName(cls, valueIn):
+    for item in cls:
+        if item == valueIn:
+            return item.value[1]
+    return listOfValues(cls)[0].value[1]
+

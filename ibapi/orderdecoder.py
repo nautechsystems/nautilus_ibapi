@@ -1,5 +1,5 @@
 """
-Copyright (C) 2024 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
+Copyright (C) 2025 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
 import logging
@@ -9,6 +9,7 @@ from ibapi import order_condition
 from ibapi.const import UNSET_DOUBLE
 from ibapi.object_implem import Object
 from ibapi.order import OrderComboLeg
+from ibapi.order_state import OrderAllocation
 from ibapi.contract import ComboLeg
 from ibapi.server_versions import (
     MIN_SERVER_VER_FA_PROFILE_DESUPPORT,
@@ -28,7 +29,11 @@ from ibapi.server_versions import (
     MIN_SERVER_VER_PEGBEST_PEGMID_OFFSETS,
     MIN_SERVER_VER_CUSTOMER_ACCOUNT,
     MIN_SERVER_VER_PROFESSIONAL_CUSTOMER,
-    MIN_SERVER_VER_BOND_ACCRUED_INTEREST
+    MIN_SERVER_VER_BOND_ACCRUED_INTEREST,
+    MIN_SERVER_VER_INCLUDE_OVERNIGHT,
+    MIN_SERVER_VER_CME_TAGGING_FIELDS_IN_OPEN_ORDER,
+    MIN_SERVER_VER_FULL_ORDER_PREVIEW_FIELDS,
+    MIN_SERVER_VER_SUBMITTER
 )
 from ibapi.tag_value import TagValue
 from ibapi.utils import decode, SHOW_UNSET, isPegBenchOrder
@@ -341,7 +346,7 @@ class OrderDecoder(Object):
     def decodeOrderStatus(self, fields):
         self.orderState.status = decode(str, fields)
 
-    def decodeWhatIfInfoAndCommission(self, fields):
+    def decodeWhatIfInfoAndCommissionAndFees(self, fields):
         self.order.whatIf = decode(bool, fields)
         OrderDecoder.decodeOrderStatus(self, fields)
         if self.serverVersion >= MIN_SERVER_VER_WHAT_IF_EXT_FIELDS:
@@ -356,10 +361,38 @@ class OrderDecoder(Object):
         self.orderState.maintMarginAfter = decode(str, fields)
         self.orderState.equityWithLoanAfter = decode(str, fields)
 
-        self.orderState.commission = decode(float, fields, SHOW_UNSET)
-        self.orderState.minCommission = decode(float, fields, SHOW_UNSET)
-        self.orderState.maxCommission = decode(float, fields, SHOW_UNSET)
-        self.orderState.commissionCurrency = decode(str, fields)
+        self.orderState.commissionAndFees = decode(float, fields, SHOW_UNSET)
+        self.orderState.minCommissionAndFees = decode(float, fields, SHOW_UNSET)
+        self.orderState.maxCommissionAndFees = decode(float, fields, SHOW_UNSET)
+        self.orderState.commissionAndFeesCurrency = decode(str, fields)
+        
+        if self.serverVersion >= MIN_SERVER_VER_FULL_ORDER_PREVIEW_FIELDS:
+            self.orderState.marginCurrency = decode(str, fields)
+            self.orderState.initMarginBeforeOutsideRTH = decode(float, fields, SHOW_UNSET)
+            self.orderState.maintMarginBeforeOutsideRTH = decode(float, fields, SHOW_UNSET)
+            self.orderState.equityWithLoanBeforeOutsideRTH = decode(float, fields, SHOW_UNSET)
+            self.orderState.initMarginChangeOutsideRTH = decode(float, fields, SHOW_UNSET)
+            self.orderState.maintMarginChangeOutsideRTH = decode(float, fields, SHOW_UNSET)
+            self.orderState.equityWithLoanChangeOutsideRTH = decode(float, fields, SHOW_UNSET)
+            self.orderState.initMarginAfterOutsideRTH = decode(float, fields, SHOW_UNSET)
+            self.orderState.maintMarginAfterOutsideRTH = decode(float, fields, SHOW_UNSET)
+            self.orderState.equityWithLoanAfterOutsideRTH = decode(float, fields, SHOW_UNSET)
+            self.orderState.suggestedSize = decode(Decimal, fields)
+            self.orderState.rejectReason = decode(str, fields)
+        
+            accountsCount = decode(int, fields)
+            if accountsCount > 0:
+                self.orderState.orderAllocations = []
+                for _ in range(accountsCount):
+                    orderAllocation = OrderAllocation()
+                    orderAllocation.account = decode(str, fields)
+                    orderAllocation.position = decode(Decimal, fields)
+                    orderAllocation.positionDesired = decode(Decimal, fields)
+                    orderAllocation.positionAfter = decode(Decimal, fields)
+                    orderAllocation.desiredAllocQty = decode(Decimal, fields)
+                    orderAllocation.allowedAllocQty = decode(Decimal, fields)
+                    orderAllocation.isMonetary = decode(bool, fields)
+                    self.orderState.orderAllocations.append(orderAllocation)
         self.orderState.warningText = decode(str, fields)
 
     def decodeVolRandomizeFlags(self, fields):
@@ -443,8 +476,9 @@ class OrderDecoder(Object):
     def decodeShareholder(self, fields):
         self.order.shareholder = decode(str, fields)
 
-    def decodeImbalanceOnly(self, fields):
-        self.order.imbalanceOnly = decode(bool, fields)
+    def decodeImbalanceOnly(self, fields, minVersionImbalanceOnly=MIN_CLIENT_VER):
+        if self.serverVersion >= minVersionImbalanceOnly:
+            self.order.imbalanceOnly = decode(bool, fields)
 
     def decodeRouteMarketableToBbo(self, fields):
         self.order.routeMarketableToBbo = decode(bool, fields)
@@ -489,3 +523,17 @@ class OrderDecoder(Object):
     def decodeBondAccruedInterest(self, fields):
         if self.serverVersion >= MIN_SERVER_VER_BOND_ACCRUED_INTEREST:
             self.order.bondAccruedInterest = decode(str, fields)
+
+    def decodeIncludeOvernight(self, fields):
+        if self.serverVersion >= MIN_SERVER_VER_INCLUDE_OVERNIGHT:
+            self.order.includeOvernight = decode(bool, fields)
+
+    def decodeCMETaggingFields(self, fields):
+        if self.serverVersion >= MIN_SERVER_VER_CME_TAGGING_FIELDS_IN_OPEN_ORDER:
+            self.order.extOperator = decode(str, fields)
+            self.order.manualOrderIndicator = decode(int, fields, SHOW_UNSET)
+
+    def decodeSubmitter(self, fields):
+        if self.serverVersion >= MIN_SERVER_VER_SUBMITTER:
+            self.order.submitter = decode(str, fields)
+

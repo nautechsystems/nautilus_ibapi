@@ -1,5 +1,5 @@
 """
-Copyright (C) 2024 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
+Copyright (C) 2025 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 
 The main class to use from API user's point of view.
@@ -19,7 +19,7 @@ from ibapi import decoder, reader, comm
 from ibapi.comm import make_field, make_field_handle_empty
 from ibapi.common import *  # @UnusedWildImport
 from ibapi.connection import Connection
-from ibapi.const import NO_VALID_ID, MAX_MSG_LEN, UNSET_INTEGER, UNSET_DOUBLE
+from ibapi.const import NO_VALID_ID, MAX_MSG_LEN, UNSET_DOUBLE
 from ibapi.contract import Contract
 from ibapi.errors import (
     NOT_CONNECTED,
@@ -114,11 +114,19 @@ from ibapi.server_versions import (
     MIN_SERVER_VER_REQ_MATCHING_SYMBOLS,
     MIN_SERVER_VER_WSHE_CALENDAR,
     MIN_SERVER_VER_WSH_EVENT_DATA_FILTERS,
+    MIN_SERVER_VER_WSH_EVENT_DATA_FILTERS_DATE,
     MIN_SERVER_VER_USER_INFO,
     MIN_SERVER_VER_MANUAL_ORDER_TIME_EXERCISE_OPTIONS,
     MIN_SERVER_VER_CUSTOMER_ACCOUNT,
     MIN_SERVER_VER_PROFESSIONAL_CUSTOMER,
-    MIN_SERVER_VER_RFQ_FIELDS
+    MIN_SERVER_VER_RFQ_FIELDS,
+    MIN_SERVER_VER_INCLUDE_OVERNIGHT,
+    MIN_SERVER_VER_UNDO_RFQ_FIELDS,
+    MIN_SERVER_VER_CME_TAGGING_FIELDS,
+    MIN_SERVER_VER_CURRENT_TIME_IN_MILLIS,
+    MIN_SERVER_VER_IMBALANCE_ONLY,
+    MIN_SERVER_VER_PARAMETRIZED_DAYS_OF_EXECUTIONS,
+    MIN_SERVER_VER_PROTOBUF
 )
 
 from ibapi.utils import ClientException, log_
@@ -128,9 +136,19 @@ from ibapi.utils import (
     isPegBenchOrder,
     isPegMidOrder,
     isPegBestOrder,
+    currentTimeMillis,
 )
 from ibapi.errors import INVALID_SYMBOL
 from ibapi.utils import isAsciiPrintable
+from ibapi.common import PROTOBUF_MSG_ID
+from ibapi.client_utils import createExecutionRequestProto, createPlaceOrderRequestProto, createCancelOrderRequestProto, createGlobalCancelRequestProto
+
+from ibapi.protobuf.ComboLeg_pb2 import ComboLeg as ComboLegProto
+from ibapi.protobuf.ExecutionFilter_pb2 import ExecutionFilter as ExecutionFilterProto
+from ibapi.protobuf.ExecutionRequest_pb2 import ExecutionRequest as ExecutionRequestProto
+from ibapi.protobuf.PlaceOrderRequest_pb2 import PlaceOrderRequest as PlaceOrderRequestProto
+from ibapi.protobuf.CancelOrderRequest_pb2 import CancelOrderRequest as CancelOrderRequestProto
+from ibapi.protobuf.GlobalCancelRequest_pb2 import GlobalCancelRequest as GlobalCancelRequestProto
 
 # TODO: use pylint
 
@@ -185,8 +203,14 @@ class EClient(object):
         self.connState = connState
         logger.debug(f"{id(self)} connState: {_connState} -> {self.connState}")
 
-    def sendMsg(self, msg):
-        full_msg = comm.make_msg(msg)
+    def sendMsgProtoBuf(self, msgId: int, msg: bytes):
+        full_msg = comm.make_msg_proto(msgId, msg)
+        logger.info("%s %s %s", "SENDING", current_fn_name(1), full_msg)
+        self.conn.sendMsg(full_msg)
+
+    def sendMsg(self, msgId:int, msg: str):
+        useRawIntMsgId = self.serverVersion() >= MIN_SERVER_VER_PROTOBUF
+        full_msg = comm.make_msg(msgId, useRawIntMsgId, msg)
         logger.info("%s %s %s", "SENDING", current_fn_name(1), full_msg)
         self.conn.sendMsg(full_msg)
 
@@ -215,6 +239,10 @@ class EClient(object):
                 self.optCapab.encode(sys.stdout.encoding, errors="ignore").decode(sys.stdout.encoding),
             )
 
+    def useProtoBuf(self, msgId: int) -> bool:
+        unifiedVersion = PROTOBUF_MSG_IDS.get(msgId)
+        return unifiedVersion is not None and unifiedVersion <= self.serverVersion()
+
     def startApi(self):
         """Initiates the message exchange between the client application and
         the TWS/IB Gateway."""
@@ -222,22 +250,22 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         try:
             VERSION = 2
 
-            msg = f"{make_field(OUT.START_API)}{make_field(VERSION)}{make_field(self.clientId)}"
+            msg = f"{make_field(VERSION)}{make_field(self.clientId)}"
 
             if self.serverVersion() >= MIN_SERVER_VER_OPTIONAL_CAPABILITIES:
                 msg += make_field(self.optCapab if self.optCapab is not None else "")
 
         except ClientException as ex:
-            self.wrapper.error(NO_VALID_ID, ex.code, ex.msg + ex.text)
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.START_API, msg)
 
     def connect(self, host, port, clientId):
         """This function must be called before any other. There is no
@@ -257,7 +285,7 @@ class EClient(object):
         try:
             self.validateInvalidSymbols(host)
         except ClientException as ex:
-            self.wrapper.error(NO_VALID_ID, ex.code, ex.msg + ex.text)
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
         try:
@@ -282,7 +310,7 @@ class EClient(object):
                 v100version = v100version + " " + self.connectOptions
 
             # v100version = "v%d..%d" % (MIN_CLIENT_VER, 101)
-            msg = comm.make_msg(v100version)
+            msg = comm.make_initial_msg(v100version)
             logger.debug("msg %s", msg)
             msg2 = str.encode(v100prefix, "ascii") + msg
             logger.debug("REQUEST %s", msg2)
@@ -293,7 +321,7 @@ class EClient(object):
 
             # sometimes I get news before the server version, thus the loop
             while len(fields) != 2:
-                self.decoder.interpret(fields)
+                self.decoder.interpret(fields, 0)
                 buf = self.conn.recvMsg()
                 if not self.conn.isConnected():
                     # recvMsg() triggers disconnect() where there's a socket.error or 0 length buffer
@@ -326,7 +354,7 @@ class EClient(object):
             self.wrapper.connectAck()
         except socket.error:
             if self.wrapper:
-                self.wrapper.error(NO_VALID_ID, CONNECT_FAIL.code(), CONNECT_FAIL.msg())
+                self.wrapper.error(NO_VALID_ID, currentTimeMillis(), CONNECT_FAIL.code(), CONNECT_FAIL.msg())
             logger.info("could not connect")
             self.disconnect()
 
@@ -385,6 +413,7 @@ class EClient(object):
                         if len(text) > MAX_MSG_LEN:
                             self.wrapper.error(
                                 NO_VALID_ID,
+                                currentTimeMillis(),
                                 BAD_LENGTH.code(),
                                 f"{BAD_LENGTH.msg()}:{len(text)}:{text}",
                             )
@@ -393,9 +422,25 @@ class EClient(object):
                         logger.debug("queue.get: empty")
                         self.msgLoopTmo()
                     else:
-                        fields = comm.read_fields(text)
-                        logger.debug("fields %s", fields)
-                        self.decoder.interpret(fields)
+
+                        if self.serverVersion() >= MIN_SERVER_VER_PROTOBUF:
+                            sMsgId = text[:4]
+                            msgId = int.from_bytes(sMsgId, 'big')  
+                            text = text[4:]
+                        else:
+                            sMsgId = text[:text.index(b"\0")]
+                            text = text[text.index(b"\0") + len(b"\0"):]
+                            msgId = int(sMsgId)
+
+                        if msgId > PROTOBUF_MSG_ID:
+                            msgId -= PROTOBUF_MSG_ID
+                            logger.debug("msgId: %d, protobuf: %s", msgId, text)
+                            self.decoder.processProtoBuf(text, msgId)
+                        else:
+                            fields = comm.read_fields(text)
+                            logger.debug("msgId: %d, fields: %s", msgId, fields)
+                            self.decoder.interpret(fields, msgId)
+
                         self.msgLoopRec()
                 except (KeyboardInterrupt, SystemExit):
                     logger.info("detected KeyboardInterrupt, SystemExit")
@@ -416,14 +461,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
-        msg = f"{make_field(OUT.REQ_CURRENT_TIME)}{make_field(VERSION)}"
+        msg = f"{make_field(VERSION)}"
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_CURRENT_TIME, msg)
 
     def serverVersion(self):
         """Returns the version of the TWS instance to which the API application is connected."""
@@ -437,14 +482,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
-        msg = f"{make_field(OUT.SET_SERVER_LOGLEVEL)}{make_field(VERSION)}{make_field(logLevel)}"
+        msg = f"{make_field(VERSION)}{make_field(logLevel)}"
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.SET_SERVER_LOGLEVEL, msg)
 
     def twsConnectionTime(self):
         """Returns the time the API application made a connection to TWS."""
@@ -472,7 +517,7 @@ class EClient(object):
             also used when canceling the market data.
         contract:Contract - This structure contains a description of the
             Contractt for which market data is being requested.
-        genericTickList:str - A commma delimited list of generic tick types.
+        genericTickList:str - A comma delimited list of generic tick types.
             Tick types can be found in the Generic Tick Types page.
             Prefixing w/ 'mdoff' indicates that top mkt data shouldn't tick.
             You can specify the news source by postfixing w/ ':<source>.
@@ -488,13 +533,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_DELTA_NEUTRAL:
             if contract.deltaNeutralContract:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support delta-neutral orders.",
                 )
@@ -504,6 +550,7 @@ class EClient(object):
             if contract.conId > 0:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support conId parameter.",
                 )
@@ -513,6 +560,7 @@ class EClient(object):
             if contract.tradingClass:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support tradingClass parameter in reqMktData.",
@@ -525,7 +573,6 @@ class EClient(object):
             # send req mkt data msg
             flds = []
             flds += [
-                make_field(OUT.REQ_MKT_DATA),
                 make_field(VERSION),
                 make_field(reqId),
             ]
@@ -540,7 +587,7 @@ class EClient(object):
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),  # srv v15 and above
                 make_field(contract.exchange),
@@ -604,10 +651,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_MKT_DATA, msg)
 
     def cancelMktData(self, reqId: TickerId):
         """After calling this function, market data for the specified id
@@ -619,7 +666,7 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 2
@@ -627,13 +674,12 @@ class EClient(object):
         # send req mkt data msg
         flds = []
         flds += [
-            make_field(OUT.CANCEL_MKT_DATA),
             make_field(VERSION),
             make_field(reqId),
         ]
 
         msg = "".join(flds)
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_MKT_DATA, msg)
 
     def reqMarketDataType(self, marketDataType: int):
         """The API can receive frozen market data from Trader
@@ -650,12 +696,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_MARKET_DATA_TYPE:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support market data type requests.",
             )
@@ -666,24 +713,24 @@ class EClient(object):
         # send req mkt data msg
         flds = []
         flds += [
-            make_field(OUT.REQ_MARKET_DATA_TYPE),
             make_field(VERSION),
             make_field(marketDataType),
         ]
 
         msg = "".join(flds)
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_MARKET_DATA_TYPE, msg)
 
     def reqSmartComponents(self, reqId: int, bboExchange: str):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_SMART_COMPONENTS:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support smart components request.",
             )
@@ -691,35 +738,35 @@ class EClient(object):
 
         try:
             msg = (
-                make_field(OUT.REQ_SMART_COMPONENTS)
-                + make_field(reqId)
+                make_field(reqId)
                 + make_field(bboExchange)
             )
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_SMART_COMPONENTS, msg)
 
     def reqMarketRule(self, marketRuleId: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_MARKET_RULES:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support market rule requests.",
             )
             return
 
-        msg = make_field(OUT.REQ_MARKET_RULE) + make_field(marketRuleId)
+        msg = make_field(marketRuleId)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_MARKET_RULE, msg)
 
     def reqTickByTickData(
         self,
@@ -732,12 +779,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_TICK_BY_TICK:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support tick-by-tick data requests.",
             )
@@ -746,6 +794,7 @@ class EClient(object):
         if self.serverVersion() < MIN_SERVER_VER_TICK_BY_TICK_IGNORE_SIZE:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + " It does not support ignoreSize and numberOfTicks parameters "
@@ -755,13 +804,12 @@ class EClient(object):
 
         try:
             msg = (
-                make_field(OUT.REQ_TICK_BY_TICK_DATA)
-                + make_field(reqId)
+                make_field(reqId)
                 + make_field(contract.conId)
                 + make_field(contract.symbol)
                 + make_field(contract.secType)
                 + make_field(contract.lastTradeDateOrContractMonth)
-                + make_field(contract.strike)
+                + make_field_handle_empty(contract.strike)
                 + make_field(contract.right)
                 + make_field(contract.multiplier)
                 + make_field(contract.exchange)
@@ -776,29 +824,30 @@ class EClient(object):
                 msg += make_field(numberOfTicks) + make_field(ignoreSize)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_TICK_BY_TICK_DATA, msg)
 
     def cancelTickByTickData(self, reqId: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_TICK_BY_TICK:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support tick-by-tick data requests.",
             )
             return
 
-        msg = make_field(OUT.CANCEL_TICK_BY_TICK_DATA) + make_field(reqId)
+        msg = make_field(reqId)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_TICK_BY_TICK_DATA, msg)
 
     ##########################################################################
     # Options
@@ -824,12 +873,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_CALC_IMPLIED_VOLAT:
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support calculateImpliedVolatility req.",
@@ -840,6 +890,7 @@ class EClient(object):
             if contract.tradingClass:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support tradingClass parameter in calculateImpliedVolatility.",
@@ -852,7 +903,6 @@ class EClient(object):
             # send req mkt data msg
             flds = []
             flds += [
-                make_field(OUT.REQ_CALC_IMPLIED_VOLAT),
                 make_field(VERSION),
                 make_field(reqId),
                 # send contract fields
@@ -860,7 +910,7 @@ class EClient(object):
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),
                 make_field(contract.exchange),
@@ -885,10 +935,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_CALC_IMPLIED_VOLAT, msg)
 
     def cancelCalculateImpliedVolatility(self, reqId: TickerId):
         """Call this function to cancel a request to calculate
@@ -899,12 +949,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_CALC_IMPLIED_VOLAT:
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support calculateImpliedVolatility req.",
@@ -914,12 +965,11 @@ class EClient(object):
         VERSION = 1
 
         msg = (
-            make_field(OUT.CANCEL_CALC_IMPLIED_VOLAT)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(reqId)
         )
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_CALC_IMPLIED_VOLAT, msg)
 
     def calculateOptionPrice(
         self,
@@ -940,12 +990,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_CALC_IMPLIED_VOLAT:
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support calculateImpliedVolatility req.",
@@ -956,6 +1007,7 @@ class EClient(object):
             if contract.tradingClass:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support tradingClass parameter in calculateImpliedVolatility.",
@@ -968,7 +1020,6 @@ class EClient(object):
             # send req mkt data msg
             flds = []
             flds += [
-                make_field(OUT.REQ_CALC_OPTION_PRICE),
                 make_field(VERSION),
                 make_field(reqId),
                 # send contract fields
@@ -976,7 +1027,7 @@ class EClient(object):
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),
                 make_field(contract.exchange),
@@ -1001,10 +1052,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_CALC_OPTION_PRICE, msg)
 
     def cancelCalculateOptionPrice(self, reqId: TickerId):
         """Call this function to cancel a request to calculate the option
@@ -1015,12 +1066,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_CALC_IMPLIED_VOLAT:
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support calculateImpliedVolatility req.",
@@ -1030,12 +1082,11 @@ class EClient(object):
         VERSION = 1
 
         msg = (
-            make_field(OUT.CANCEL_CALC_OPTION_PRICE)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(reqId)
         )
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_CALC_OPTION_PRICE, msg)
 
     def exerciseOptions(
         self,
@@ -1065,18 +1116,19 @@ class EClient(object):
             Values are: 0 = no, 1 = yes.
         manualOrderTime:str - manual order time
         customerAccount:str - customer account
-        professionalCustomer:bool - professinal customer"""
+        professionalCustomer:bool - professional customer"""
 
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_TRADING_CLASS:
             if contract.tradingClass or contract.conId > 0:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support conId and tradingClass parameters in exerciseOptions.",
@@ -1086,6 +1138,7 @@ class EClient(object):
         if self.serverVersion() < MIN_SERVER_VER_MANUAL_ORDER_TIME_EXERCISE_OPTIONS and manualOrderTime:
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support manual order time parameter in exerciseOptions.",
@@ -1098,6 +1151,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support customer account parameter in exerciseOptions.",
             )
@@ -1109,6 +1163,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support professional customer parameter in exerciseOptions.",
             )
@@ -1120,7 +1175,6 @@ class EClient(object):
             # send req mkt data msg
             fields = []
             fields += [
-                make_field(OUT.EXERCISE_OPTIONS),
                 make_field(VERSION),
                 make_field(reqId),
             ]
@@ -1133,7 +1187,7 @@ class EClient(object):
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),
                 make_field(contract.exchange),
@@ -1166,10 +1220,10 @@ class EClient(object):
             msg = "".join(fields)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.EXERCISE_OPTIONS, msg)
 
     #########################################################################
     # Orders
@@ -1187,16 +1241,22 @@ class EClient(object):
         order:Order - This structure contains the details of tradedhe order.
             Note: Each client MUST connect with a unique clientId."""
 
+        if (self.useProtoBuf(OUT.PLACE_ORDER)):
+            placeOrderRequestProto = createPlaceOrderRequestProto(orderId, contract, order)
+            self.placeOrderProtoBuf(placeOrderRequestProto)
+            return
+
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(orderId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(orderId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_DELTA_NEUTRAL:
             if contract.deltaNeutralContract:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support delta-neutral orders.",
                 )
@@ -1206,6 +1266,7 @@ class EClient(object):
             if order.scaleSubsLevelSize != UNSET_INTEGER:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(), 
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support Subsequent Level Size for Scale orders.",
@@ -1216,6 +1277,7 @@ class EClient(object):
             if order.algoStrategy:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(), 
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support algo orders.",
                 )
@@ -1225,6 +1287,7 @@ class EClient(object):
             if order.notHeld:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(), 
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support notHeld parameter.",
                 )
@@ -1234,6 +1297,7 @@ class EClient(object):
             if contract.secIdType or contract.secId:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support secIdType and secId parameters.",
@@ -1244,6 +1308,7 @@ class EClient(object):
             if contract.conId and contract.conId > 0:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support conId parameter.",
                 )
@@ -1253,6 +1318,7 @@ class EClient(object):
             if order.exemptCode != -1:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support exemptCode parameter.",
                 )
@@ -1264,6 +1330,7 @@ class EClient(object):
                     if comboLeg.exemptCode != -1:
                         self.wrapper.error(
                             orderId,
+                            currentTimeMillis(),
                             UPDATE_TWS.code(),
                             UPDATE_TWS.msg()
                             + "  It does not support exemptCode parameter.",
@@ -1274,6 +1341,7 @@ class EClient(object):
             if order.hedgeType:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support hedge orders.",
                 )
@@ -1283,6 +1351,7 @@ class EClient(object):
             if order.optOutSmartRouting:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support optOutSmartRouting parameter.",
@@ -1298,6 +1367,7 @@ class EClient(object):
             ):
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support deltaNeutral parameters: "
@@ -1314,6 +1384,7 @@ class EClient(object):
             ):
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support deltaNeutral parameters: "
                     "OpenClose, ShortSale, ShortSaleSlot, DesignatedLocation.",
@@ -1336,6 +1407,7 @@ class EClient(object):
                 ):
                     self.wrapper.error(
                         orderId,
+                        currentTimeMillis(),
                         UPDATE_TWS.code(),
                         UPDATE_TWS.msg()
                         + "  It does not support Scale order parameters: PriceAdjustValue, PriceAdjustInterval, "
@@ -1352,6 +1424,7 @@ class EClient(object):
                     if orderComboLeg.price != UNSET_DOUBLE:
                         self.wrapper.error(
                             orderId,
+                            currentTimeMillis(),
                             UPDATE_TWS.code(),
                             UPDATE_TWS.msg()
                             + "  It does not support per-leg prices for order combo legs.",
@@ -1362,6 +1435,7 @@ class EClient(object):
             if order.trailingPercent != UNSET_DOUBLE:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support trailing percent parameter",
@@ -1372,6 +1446,7 @@ class EClient(object):
             if contract.tradingClass:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support tradingClass parameter in placeOrder.",
@@ -1382,6 +1457,7 @@ class EClient(object):
             if order.scaleTable or order.activeStartTime or order.activeStopTime:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support scaleTable, activeStartTime and activeStopTime parameters",
@@ -1392,6 +1468,7 @@ class EClient(object):
             if order.algoId:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support algoId parameter",
                 )
@@ -1401,6 +1478,7 @@ class EClient(object):
             if order.solicited:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support order solicited parameter.",
@@ -1411,6 +1489,7 @@ class EClient(object):
             if order.modelCode:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support model code parameter.",
                 )
@@ -1420,6 +1499,7 @@ class EClient(object):
             if order.extOperator:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + "  It does not support ext operator parameter",
                 )
@@ -1429,6 +1509,7 @@ class EClient(object):
             if order.softDollarTier.name or order.softDollarTier.val:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + " It does not support soft dollar tier",
                 )
@@ -1438,6 +1519,7 @@ class EClient(object):
             if order.cashQty:
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + " It does not support cash quantity parameter",
                 )
@@ -1448,6 +1530,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + " It does not support MIFID II decision maker parameters",
@@ -1459,6 +1542,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support MIFID II execution parameters",
             )
@@ -1470,6 +1554,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + " It does not support dontUseAutoPriceForHedge parameter",
@@ -1482,6 +1567,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support oms container parameter",
             )
@@ -1493,6 +1579,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + " It does not support Use price management algo requests",
@@ -1505,6 +1592,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support duration attribute",
             )
@@ -1516,6 +1604,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support postToAts attribute",
             )
@@ -1527,6 +1616,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support autoCancelParent attribute",
             )
@@ -1538,6 +1628,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support advanced error override attribute",
@@ -1550,6 +1641,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support manual order time attribute",
             )
@@ -1565,6 +1657,7 @@ class EClient(object):
             ):
                 self.wrapper.error(
                     orderId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support PEG BEST / PEG MID order parameters: minTradeQty, minCompeteSize, "
@@ -1578,6 +1671,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support customer account parameter",
             )
@@ -1589,19 +1683,45 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support professional customer parameter",
             )
             return
 
         if (
-            self.serverVersion() < MIN_SERVER_VER_RFQ_FIELDS
-            and (order.externalUserId or order.manualOrderIndicator != UNSET_INTEGER)
+            self.serverVersion() < MIN_SERVER_VER_INCLUDE_OVERNIGHT
+            and order.includeOvernight
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
-                UPDATE_TWS.msg() + "  It does not support external user id and manual order indicator parameters",
+                UPDATE_TWS.msg() + "  It does not support include overnight parameter",
+            )
+            return
+
+        if (
+            self.serverVersion() < MIN_SERVER_VER_CME_TAGGING_FIELDS 
+            and order.manualOrderIndicator != UNSET_INTEGER
+        ):
+            self.wrapper.error(
+                NO_VALID_ID,
+                currentTimeMillis(),
+                UPDATE_TWS.code(),
+                UPDATE_TWS.msg() + " It does not support manual order indicator parameters",
+            )
+            return
+
+        if (
+            self.serverVersion() < MIN_SERVER_VER_IMBALANCE_ONLY
+            and order.imbalanceOnly
+        ):
+            self.wrapper.error(
+                orderId,
+                currentTimeMillis(),
+                UPDATE_TWS.code(),
+                UPDATE_TWS.msg() + "  It does not support imbalance only parameter",
             )
             return
 
@@ -1610,7 +1730,6 @@ class EClient(object):
 
             # send place order msg
             flds = []
-            flds += [make_field(OUT.PLACE_ORDER)]
 
             if self.serverVersion() < MIN_SERVER_VER_ORDER_CONTAINER:
                 flds += [make_field(VERSION)]
@@ -1624,7 +1743,7 @@ class EClient(object):
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),  # srv v15 and above
                 make_field(contract.exchange),
@@ -2036,17 +2155,31 @@ class EClient(object):
             if self.serverVersion() >= MIN_SERVER_VER_PROFESSIONAL_CUSTOMER:
                 flds.append(make_field(order.professionalCustomer))
 
-            if self.serverVersion() >= MIN_SERVER_VER_RFQ_FIELDS:
-                flds.append(make_field(order.externalUserId))
+            if self.serverVersion() >= MIN_SERVER_VER_RFQ_FIELDS and self.serverVersion() < MIN_SERVER_VER_UNDO_RFQ_FIELDS:
+                flds.append(make_field(""))
+                flds.append(make_field(UNSET_INTEGER))
+
+            if self.serverVersion() >= MIN_SERVER_VER_INCLUDE_OVERNIGHT:
+                flds.append(make_field(order.includeOvernight))
+
+            if self.serverVersion() >= MIN_SERVER_VER_CME_TAGGING_FIELDS:
                 flds.append(make_field(order.manualOrderIndicator))
+
+            if self.serverVersion() >= MIN_SERVER_VER_IMBALANCE_ONLY:
+                flds.append(make_field(order.imbalanceOnly))
 
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(orderId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(orderId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.PLACE_ORDER, msg)
+
+    def placeOrderProtoBuf(self, placeOrderRequestProto: PlaceOrderRequestProto):
+        serializedString = placeOrderRequestProto.SerializeToString()
+
+        self.sendMsgProtoBuf(OUT.PLACE_ORDER + PROTOBUF_MSG_ID, serializedString)
 
     def cancelOrder(self, orderId: OrderId, orderCancel: OrderCancel):
         """Call this function to cancel an order.
@@ -2054,10 +2187,15 @@ class EClient(object):
         orderId:OrderId - The order ID that was specified previously in the call
             to placeOrder()"""
 
+        if (self.useProtoBuf(OUT.CANCEL_ORDER)):
+            cancelOrderRequestProto = createCancelOrderRequestProto(orderId, orderCancel)
+            self.cancelOrderProtoBuf(cancelOrderRequestProto)
+            return
+
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if (
@@ -2066,20 +2204,21 @@ class EClient(object):
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support manual order cancel time attribute",
             )
             return
 
-        if (
-            self.serverVersion() < MIN_SERVER_VER_RFQ_FIELDS
-            and (orderCancel.extOperator or orderCancel.externalUserId or orderCancel.manualOrderIndicator != UNSET_INTEGER) 
+        if self.serverVersion() < MIN_SERVER_VER_CME_TAGGING_FIELDS and (
+            orderCancel.extOperator != "" or orderCancel.manualOrderIndicator != UNSET_INTEGER
         ):
             self.wrapper.error(
                 orderId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
-                UPDATE_TWS.msg() + "  It does not support ext operator, external user id and manual order indicator parameters",
+                UPDATE_TWS.msg() + " It does not support ext operator and manual order indicator parameters",
             )
             return
 
@@ -2087,25 +2226,34 @@ class EClient(object):
             VERSION = 1
 
             flds = []
-            flds += [make_field(OUT.CANCEL_ORDER)]
-            flds += [make_field(VERSION)]
+            if self.serverVersion() < MIN_SERVER_VER_CME_TAGGING_FIELDS:
+                flds += [make_field(VERSION)]
             flds += [make_field(orderId)]
 
             if self.serverVersion() >= MIN_SERVER_VER_MANUAL_ORDER_TIME:
                 flds += [make_field(orderCancel.manualOrderCancelTime)]
 
-            if self.serverVersion() >= MIN_SERVER_VER_RFQ_FIELDS:
+            if self.serverVersion() >= MIN_SERVER_VER_RFQ_FIELDS and self.serverVersion() < MIN_SERVER_VER_UNDO_RFQ_FIELDS:
+                flds += [make_field("")]
+                flds += [make_field("")]
+                flds += [make_field(UNSET_INTEGER)]
+
+            if self.serverVersion() >= MIN_SERVER_VER_CME_TAGGING_FIELDS:
                 flds += [make_field(orderCancel.extOperator)]
-                flds += [make_field(orderCancel.externalUserId)]
                 flds += [make_field(orderCancel.manualOrderIndicator)]
 
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(orderId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(orderId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_ORDER, msg)
+
+    def cancelOrderProtoBuf(self, cancelOrderRequestProto: CancelOrderRequestProto):
+        serializedString = cancelOrderRequestProto.SerializeToString()
+
+        self.sendMsgProtoBuf(OUT.CANCEL_ORDER + PROTOBUF_MSG_ID, serializedString)
 
     def reqOpenOrders(self):
         """Call this function to request the open orders that were
@@ -2120,14 +2268,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
-        msg = make_field(OUT.REQ_OPEN_ORDERS) + make_field(VERSION)
+        msg = make_field(VERSION)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_OPEN_ORDERS, msg)
 
     def reqAutoOpenOrders(self, bAutoBind: bool):
         """Call this function to request that newly created TWS orders
@@ -2144,18 +2292,17 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
         msg = (
-            make_field(OUT.REQ_AUTO_OPEN_ORDERS)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(bAutoBind)
         )
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_AUTO_OPEN_ORDERS, msg)
 
     def reqAllOpenOrders(self):
         """Call this function to request the open orders placed from all
@@ -2168,33 +2315,67 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
-        msg = make_field(OUT.REQ_ALL_OPEN_ORDERS) + make_field(VERSION)
+        msg = make_field(VERSION)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_ALL_OPEN_ORDERS, msg)
 
-    def reqGlobalCancel(self):
+    def reqGlobalCancel(self, orderCancel: OrderCancel):
         """Use this function to cancel all open orders globally. It
         cancels both API and TWS open orders.
 
         If the order was created in TWS, it also gets canceled. If the order
         was initiated in the API, it also gets canceled."""
 
+        if (self.useProtoBuf(OUT.REQ_GLOBAL_CANCEL)):
+            globalCancelRequestProto = createGlobalCancelRequestProto(orderCancel)
+            self.reqGlobalCancelProtoBuf(globalCancelRequestProto)
+            return
+
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
-        VERSION = 1
+        if self.serverVersion() < MIN_SERVER_VER_CME_TAGGING_FIELDS and (
+            orderCancel.extOperator != "" or orderCancel.manualOrderIndicator != UNSET_INTEGER
+        ):
+            self.wrapper.error(
+                NO_VALID_ID,
+                currentTimeMillis(),
+                UPDATE_TWS.code(),
+                UPDATE_TWS.msg() + " It does not support ext operator and manual order indicator parameters",
+            )
+            return
 
-        msg = make_field(OUT.REQ_GLOBAL_CANCEL) + make_field(VERSION)
+        try:
+            VERSION = 1
 
-        self.sendMsg(msg)
+            flds = []
+            if self.serverVersion() < MIN_SERVER_VER_CME_TAGGING_FIELDS:
+                flds += [make_field(VERSION)]
+
+            if self.serverVersion() >= MIN_SERVER_VER_CME_TAGGING_FIELDS:
+                flds += [make_field(orderCancel.extOperator)]
+                flds += [make_field(orderCancel.manualOrderIndicator)]
+
+            msg = "".join(flds)
+
+        except ClientException as ex:
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
+            return
+
+        self.sendMsg(OUT.REQ_GLOBAL_CANCEL, msg)
+
+    def reqGlobalCancelProtoBuf(self, globalCancelRequestProto: GlobalCancelRequestProto):
+        serializedString = globalCancelRequestProto.SerializeToString()
+
+        self.sendMsgProtoBuf(OUT.REQ_GLOBAL_CANCEL + PROTOBUF_MSG_ID, serializedString)
 
     def reqIds(self, numIds: int):
         """Call this function to request from TWS the next valid ID that
@@ -2208,14 +2389,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
-        msg = make_field(OUT.REQ_IDS) + make_field(VERSION) + make_field(numIds)
+        msg = make_field(VERSION) + make_field(numIds)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_IDS, msg)
 
     #########################################################################
     # Account and Portfolio
@@ -2235,7 +2416,7 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         try:
@@ -2243,7 +2424,6 @@ class EClient(object):
 
             flds = []
             flds += [
-                make_field(OUT.REQ_ACCT_DATA),
                 make_field(VERSION),
                 make_field(subscribe),  # TRUE = subscribe, FALSE = unsubscribe.
                 make_field(acctCode),
@@ -2252,10 +2432,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(NO_VALID_ID, ex.code, ex.msg + ex.text)
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_ACCT_DATA, msg)
 
     def reqAccountSummary(self, reqId: int, groupName: str, tags: str):
         """Call this method to request and keep up to date the data that appears
@@ -2315,25 +2495,24 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         try:
             VERSION = 1
 
             msg = (
-                make_field(OUT.REQ_ACCOUNT_SUMMARY)
-                + make_field(VERSION)
+                make_field(VERSION)
                 + make_field(reqId)
                 + make_field(groupName)
                 + make_field(tags)
             )
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_ACCOUNT_SUMMARY, msg)
 
     def cancelAccountSummary(self, reqId: int):
         """Cancels the request for Account Window Summary tab data.
@@ -2343,18 +2522,17 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
         msg = (
-            make_field(OUT.CANCEL_ACCOUNT_SUMMARY)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(reqId)
         )
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_ACCOUNT_SUMMARY, msg)
 
     def reqPositions(self):
         """Requests real-time position data for all accounts."""
@@ -2362,12 +2540,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_POSITIONS:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support positions request.",
             )
@@ -2375,9 +2554,9 @@ class EClient(object):
 
         VERSION = 1
 
-        msg = make_field(OUT.REQ_POSITIONS) + make_field(VERSION)
+        msg = make_field(VERSION)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_POSITIONS, msg)
 
     def cancelPositions(self):
         """Cancels real-time position updates."""
@@ -2385,12 +2564,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_POSITIONS:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support positions request.",
             )
@@ -2398,9 +2578,9 @@ class EClient(object):
 
         VERSION = 1
 
-        msg = make_field(OUT.CANCEL_POSITIONS) + make_field(VERSION)
+        msg = make_field(VERSION)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_POSITIONS, msg)
 
     def reqPositionsMulti(self, reqId: int, account: str, modelCode: str):
         """Requests positions for account and/or model.
@@ -2410,12 +2590,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_MODELS_SUPPORT:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support positions multi request.",
             )
@@ -2425,29 +2606,29 @@ class EClient(object):
             VERSION = 1
 
             msg = (
-                make_field(OUT.REQ_POSITIONS_MULTI)
-                + make_field(VERSION)
+                make_field(VERSION)
                 + make_field(reqId)
                 + make_field(account)
                 + make_field(modelCode)
             )
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_POSITIONS_MULTI, msg)
 
     def cancelPositionsMulti(self, reqId: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_MODELS_SUPPORT:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support cancel positions multi request.",
@@ -2457,11 +2638,10 @@ class EClient(object):
         VERSION = 1
 
         msg = (
-            make_field(OUT.CANCEL_POSITIONS_MULTI)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(reqId)
         )
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_POSITIONS_MULTI, msg)
 
     def reqAccountUpdatesMulti(
         self, reqId: int, account: str, modelCode: str, ledgerAndNLV: bool
@@ -2471,12 +2651,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_MODELS_SUPPORT:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support account updates multi request.",
@@ -2487,8 +2668,7 @@ class EClient(object):
             VERSION = 1
 
             msg = (
-                make_field(OUT.REQ_ACCOUNT_UPDATES_MULTI)
-                + make_field(VERSION)
+                make_field(VERSION)
                 + make_field(reqId)
                 + make_field(account)
                 + make_field(modelCode)
@@ -2496,21 +2676,22 @@ class EClient(object):
             )
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_ACCOUNT_UPDATES_MULTI, msg)
 
     def cancelAccountUpdatesMulti(self, reqId: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_MODELS_SUPPORT:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support cancel account updates multi request.",
@@ -2520,11 +2701,10 @@ class EClient(object):
         VERSION = 1
 
         msg = (
-            make_field(OUT.CANCEL_ACCOUNT_UPDATES_MULTI)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(reqId)
         )
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_ACCOUNT_UPDATES_MULTI, msg)
 
     #########################################################################
     # Daily PnL
@@ -2534,12 +2714,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_PNL:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support PnL request.",
             )
@@ -2547,47 +2728,48 @@ class EClient(object):
 
         try:
             msg = (
-                make_field(OUT.REQ_PNL)
-                + make_field(reqId)
+                make_field(reqId)
                 + make_field(account)
                 + make_field(modelCode)
             )
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_PNL, msg)
 
     def cancelPnL(self, reqId: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_PNL:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support PnL request.",
             )
             return
 
-        msg = make_field(OUT.CANCEL_PNL) + make_field(reqId)
+        msg = make_field(reqId)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_PNL, msg)
 
     def reqPnLSingle(self, reqId: int, account: str, modelCode: str, conid: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_PNL:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support PnL request.",
             )
@@ -2595,37 +2777,37 @@ class EClient(object):
 
         try:
             msg = (
-                make_field(OUT.REQ_PNL_SINGLE)
-                + make_field(reqId)
+                make_field(reqId)
                 + make_field(account)
                 + make_field(modelCode)
                 + make_field(conid)
             )
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_PNL_SINGLE, msg)
 
     def cancelPnLSingle(self, reqId: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_PNL:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support PnL request.",
             )
             return
 
-        msg = make_field(OUT.CANCEL_PNL_SINGLE) + make_field(reqId)
+        msg = make_field(reqId)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_PNL_SINGLE, msg)
 
     #########################################################################
     # Executions
@@ -2645,19 +2827,38 @@ class EClient(object):
             reports are returned.
 
         NOTE: Time format must be 'yyyymmdd-hh:mm:ss' Eg: '20030702-14:55'"""
+        if (self.useProtoBuf(OUT.REQ_EXECUTIONS)):
+            executionRequestProto = createExecutionRequestProto(reqId, execFilter)
+            self.reqExecutionsProtoBuf(executionRequestProto)
+            return
 
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
+        
+        
+        if self.serverVersion() < MIN_SERVER_VER_PARAMETRIZED_DAYS_OF_EXECUTIONS:
+            if (
+                execFilter.lastNDays != UNSET_INTEGER
+                or execFilter.specificDates is not None 
+            ):
+                self.wrapper.error(
+                    reqId,
+                    currentTimeMillis(),
+                    UPDATE_TWS.code(),
+                    UPDATE_TWS.msg()
+                    + "  It does not support last N days and specific dates parameters",
+                )
+                return
 
         try:
             VERSION = 3
 
             # send req open orders msg
             flds = []
-            flds += [make_field(OUT.REQ_EXECUTIONS), make_field(VERSION)]
+            flds += [make_field(VERSION)]
 
             if self.serverVersion() >= MIN_SERVER_VER_EXECUTION_DATA_CHAIN:
                 flds += [
@@ -2674,14 +2875,36 @@ class EClient(object):
                 make_field(execFilter.exchange),
                 make_field(execFilter.side),
             ]
+            
+            if self.serverVersion() >= MIN_SERVER_VER_PARAMETRIZED_DAYS_OF_EXECUTIONS:
+                flds += [
+                    make_field(execFilter.lastNDays),
+                ]
+                if execFilter.specificDates is not None :
+                    flds += [
+                        make_field(len(execFilter.specificDates)),
+                    ]
+                    for specificDate in execFilter.specificDates:
+                        flds += [
+                            make_field(specificDate),
+                        ]
+                else:
+                    flds += [
+                        make_field(0),
+                    ]
 
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_EXECUTIONS, msg)
+
+    def reqExecutionsProtoBuf(self, executionRequestProto: ExecutionRequestProto):
+        serializedString = executionRequestProto.SerializeToString()
+
+        self.sendMsgProtoBuf(OUT.REQ_EXECUTIONS + PROTOBUF_MSG_ID, serializedString)
 
     #########################################################################
     # Contract Details
@@ -2700,13 +2923,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_SEC_ID_TYPE:
             if contract.secIdType or contract.secId:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support secIdType and secId parameters.",
@@ -2717,6 +2941,7 @@ class EClient(object):
             if contract.tradingClass:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support tradingClass parameter in reqContractDetails.",
@@ -2727,6 +2952,7 @@ class EClient(object):
             if contract.primaryExchange:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support primaryExchange parameter in reqContractDetails.",
@@ -2737,6 +2963,7 @@ class EClient(object):
             if contract.issuerId:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support issuerId parameter in reqContractDetails.",
@@ -2748,7 +2975,7 @@ class EClient(object):
 
             # send req mkt data msg
             flds = []
-            flds += [make_field(OUT.REQ_CONTRACT_DATA), make_field(VERSION)]
+            flds += [make_field(VERSION)]
 
             if self.serverVersion() >= MIN_SERVER_VER_CONTRACT_DATA_CHAIN:
                 flds += [
@@ -2761,7 +2988,7 @@ class EClient(object):
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),
             ]  # srv v15 and above
@@ -2803,10 +3030,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_CONTRACT_DATA, msg)
 
     #########################################################################
     # Market Depth
@@ -2816,21 +3043,20 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_MKT_DEPTH_EXCHANGES:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support market depth exchanges request.",
             )
             return
 
-        msg = make_field(OUT.REQ_MKT_DEPTH_EXCHANGES)
-
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_MKT_DEPTH_EXCHANGES, "")
 
     def reqMktDepth(
         self,
@@ -2847,7 +3073,7 @@ class EClient(object):
         Requests the contract's market depth (order book). Note this request must be
         direct-routed to an exchange and not smart-routed. The number of simultaneous
         market depth requests allowed in an account is calculated based on a formula
-        that looks at an accounts' equity, commissions, and quote booster packs.
+        that looks at an accounts' equity, commission and fees, and quote booster packs.
 
         reqId:TickerId - The ticker id. Must be a unique value. When the market
             depth data returns, it will be identified by this tag. This is
@@ -2862,13 +3088,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_TRADING_CLASS:
             if contract.tradingClass or contract.conId > 0:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support conId and tradingClass parameters in reqMktDepth.",
@@ -2878,6 +3105,7 @@ class EClient(object):
         if self.serverVersion() < MIN_SERVER_VER_SMART_DEPTH and isSmartDepth:
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support SMART depth request.",
             )
@@ -2889,6 +3117,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + " It does not support primaryExchange parameter in reqMktDepth.",
@@ -2901,7 +3130,6 @@ class EClient(object):
             # send req mkt depth msg
             flds = []
             flds += [
-                make_field(OUT.REQ_MKT_DEPTH),
                 make_field(VERSION),
                 make_field(reqId),
             ]
@@ -2915,7 +3143,7 @@ class EClient(object):
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),  # srv v15 and above
                 make_field(contract.exchange),
@@ -2952,10 +3180,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_MKT_DEPTH, msg)
 
     def cancelMktDepth(self, reqId: TickerId, isSmartDepth: bool):
         """After calling this function, market depth data for the specified id
@@ -2968,12 +3196,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_SMART_DEPTH and isSmartDepth:
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support SMART depth cancel.",
             )
@@ -2984,7 +3213,6 @@ class EClient(object):
         # send cancel mkt depth msg
         flds = []
         flds += [
-            make_field(OUT.CANCEL_MKT_DEPTH),
             make_field(VERSION),
             make_field(reqId),
         ]
@@ -2994,7 +3222,7 @@ class EClient(object):
 
         msg = "".join(flds)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_MKT_DEPTH, msg)
 
     #########################################################################
     # News Bulletins
@@ -3011,18 +3239,17 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
         msg = (
-            make_field(OUT.REQ_NEWS_BULLETINS)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(allMsgs)
         )
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_NEWS_BULLETINS, msg)
 
     def cancelNewsBulletins(self):
         """Call this function to stop receiving news bulletins."""
@@ -3030,14 +3257,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
-        msg = make_field(OUT.CANCEL_NEWS_BULLETINS) + make_field(VERSION)
+        msg = make_field(VERSION)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_NEWS_BULLETINS, msg)
 
     #########################################################################
     # Financial Advisors
@@ -3052,14 +3279,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
-        msg = make_field(OUT.REQ_MANAGED_ACCTS) + make_field(VERSION)
+        msg = make_field(VERSION)
 
-        return self.sendMsg(msg)
+        return self.sendMsg(OUT.REQ_MANAGED_ACCTS, msg)
 
     def requestFA(self, faData: FaDataType):
         """Call this function to request FA configuration information from TWS.
@@ -3073,12 +3300,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() >= MIN_SERVER_VER_FA_PROFILE_DESUPPORT and faData == 2:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 FA_PROFILE_NOT_SUPPORTED.code(),
                 FA_PROFILE_NOT_SUPPORTED.msg(),
             )
@@ -3086,9 +3314,9 @@ class EClient(object):
 
         VERSION = 1
 
-        msg = make_field(OUT.REQ_FA) + make_field(VERSION) + make_field(int(faData))
+        msg = make_field(VERSION) + make_field(int(faData))
 
-        return self.sendMsg(msg)
+        return self.sendMsg(OUT.REQ_FA, msg)
 
     def replaceFA(self, reqId: TickerId, faData: FaDataType, cxml: str):
         """Call this function to modify FA configuration information from the
@@ -3105,21 +3333,18 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() >= MIN_SERVER_VER_FA_PROFILE_DESUPPORT and faData == 2:
-            self.wrapper.error(
-                reqId, FA_PROFILE_NOT_SUPPORTED.code(), FA_PROFILE_NOT_SUPPORTED.msg()
-            )
+            self.wrapper.error(reqId, currentTimeMillis(), FA_PROFILE_NOT_SUPPORTED.code(), FA_PROFILE_NOT_SUPPORTED.msg())
             return
 
         try:
             VERSION = 1
 
             msg = (
-                make_field(OUT.REPLACE_FA)
-                + make_field(VERSION)
+                make_field(VERSION)
                 + make_field(int(faData))
                 + make_field(cxml)
             )
@@ -3128,10 +3353,10 @@ class EClient(object):
                 msg += make_field(reqId)
 
         except ClientException as ex:
-            self.wrapper.error(NO_VALID_ID, ex.code, ex.msg + ex.text)
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        return self.sendMsg(msg)
+        return self.sendMsg(OUT.REPLACE_FA, msg)
 
     #########################################################################
     # Historical Data
@@ -3208,13 +3433,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_TRADING_CLASS:
             if contract.tradingClass or contract.conId > 0:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support conId and tradingClass parameters in reqHistoricalData.",
@@ -3225,6 +3451,7 @@ class EClient(object):
             if whatToShow == "SCHEDULE":
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support requesting of historical schedule.",
@@ -3236,9 +3463,6 @@ class EClient(object):
 
             # send req mkt data msg
             flds = []
-            flds += [
-                make_field(OUT.REQ_HISTORICAL_DATA),
-            ]
 
             if self.serverVersion() < MIN_SERVER_VER_SYNT_REALTIME_BARS:
                 flds += [
@@ -3258,7 +3482,7 @@ class EClient(object):
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),
                 make_field(contract.exchange),
@@ -3311,10 +3535,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_HISTORICAL_DATA, msg)
 
     def cancelHistoricalData(self, reqId: TickerId):
         """Used if an internet disconnect has occurred or the results of a query
@@ -3326,18 +3550,17 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
         msg = (
-            make_field(OUT.CANCEL_HISTORICAL_DATA)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(reqId)
         )
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_HISTORICAL_DATA, msg)
 
     # Note that formatData parameter affects intraday bars only
     # 1-day bars always return with date in YYYYMMDD format
@@ -3353,12 +3576,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_HEAD_TIMESTAMP:
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support head time stamp requests.",
             )
@@ -3367,13 +3591,12 @@ class EClient(object):
         try:
             flds = []
             flds += [
-                make_field(OUT.REQ_HEAD_TIMESTAMP),
                 make_field(reqId),
                 make_field(contract.conId),
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),
                 make_field(contract.exchange),
@@ -3390,31 +3613,32 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_HEAD_TIMESTAMP, msg)
 
     def cancelHeadTimeStamp(self, reqId: TickerId):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_CANCEL_HEADTIMESTAMP:
             self.wrapper.error(
                 reqId,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support head time stamp requests.",
             )
             return
 
         flds = []
-        flds += [make_field(OUT.CANCEL_HEAD_TIMESTAMP), make_field(reqId)]
+        flds += [make_field(reqId)]
 
         msg = "".join(flds)
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_HEAD_TIMESTAMP, msg)
 
     def reqHistogramData(
         self, tickerId: int, contract: Contract, useRTH: bool, timePeriod: str
@@ -3422,12 +3646,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_HISTOGRAM:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support histogram requests..",
             )
@@ -3436,13 +3661,12 @@ class EClient(object):
         try:
             flds = []
             flds += [
-                make_field(OUT.REQ_HISTOGRAM_DATA),
                 make_field(tickerId),
                 make_field(contract.conId),
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),
                 make_field(contract.exchange),
@@ -3458,29 +3682,30 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(tickerId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(tickerId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_HISTOGRAM_DATA, msg)
 
     def cancelHistogramData(self, tickerId: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_HISTOGRAM:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support histogram requests..",
             )
             return
 
-        msg = make_field(OUT.CANCEL_HISTOGRAM_DATA) + make_field(tickerId)
+        msg = make_field(tickerId)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_HISTOGRAM_DATA, msg)
 
     def reqHistoricalTicks(
         self,
@@ -3497,12 +3722,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_HISTORICAL_TICKS:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support historical ticks requests..",
             )
@@ -3511,13 +3737,12 @@ class EClient(object):
         try:
             flds = []
             flds += [
-                make_field(OUT.REQ_HISTORICAL_TICKS),
                 make_field(reqId),
                 make_field(contract.conId),
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),
                 make_field(contract.exchange),
@@ -3545,10 +3770,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_HISTORICAL_TICKS, msg)
 
     #########################################################################
     # Market Scanners
@@ -3560,14 +3785,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
-        msg = make_field(OUT.REQ_SCANNER_PARAMETERS) + make_field(VERSION)
+        msg = make_field(VERSION)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_SCANNER_PARAMETERS, msg)
 
     def reqScannerSubscription(
         self,
@@ -3585,7 +3810,7 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if (
@@ -3594,6 +3819,7 @@ class EClient(object):
         ):
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + " It does not support API scanner subscription generic filter options",
@@ -3604,7 +3830,6 @@ class EClient(object):
             VERSION = 4
 
             flds = []
-            flds += [make_field(OUT.REQ_SCANNER_SUBSCRIPTION)]
 
             if self.serverVersion() < MIN_SERVER_VER_SCANNER_GENERIC_OPTS:
                 flds += [make_field(VERSION)]
@@ -3657,10 +3882,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_SCANNER_SUBSCRIPTION, msg)
 
     def cancelScannerSubscription(self, reqId: int):
         """reqId:int - The ticker ID. Must be a unique value."""
@@ -3668,18 +3893,17 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
 
         msg = (
-            make_field(OUT.CANCEL_SCANNER_SUBSCRIPTION)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(reqId)
         )
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_SCANNER_SUBSCRIPTION, msg)
 
     #########################################################################
     # Real Time Bars
@@ -3723,13 +3947,14 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_TRADING_CLASS:
             if contract.tradingClass:
                 self.wrapper.error(
                     reqId,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support conId and tradingClass parameter in reqRealTimeBars.",
@@ -3741,7 +3966,6 @@ class EClient(object):
 
             flds = []
             flds += [
-                make_field(OUT.REQ_REAL_TIME_BARS),
                 make_field(VERSION),
                 make_field(reqId),
             ]
@@ -3755,7 +3979,7 @@ class EClient(object):
                 make_field(contract.symbol),
                 make_field(contract.secType),
                 make_field(contract.lastTradeDateOrContractMonth),
-                make_field(contract.strike),
+                make_field_handle_empty(contract.strike),
                 make_field(contract.right),
                 make_field(contract.multiplier),
                 make_field(contract.exchange),
@@ -3782,10 +4006,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_REAL_TIME_BARS, msg)
 
     def cancelRealTimeBars(self, reqId: TickerId):
         """Call the cancelRealTimeBars() function to stop receiving real time bar results.
@@ -3795,7 +4019,7 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(reqId, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         VERSION = 1
@@ -3803,13 +4027,12 @@ class EClient(object):
         # send req mkt data msg
         flds = []
         flds += [
-            make_field(OUT.CANCEL_REAL_TIME_BARS),
             make_field(VERSION),
             make_field(reqId),
         ]
 
         msg = "".join(flds)
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_REAL_TIME_BARS, msg)
 
     #########################################################################
     # Fundamental Data
@@ -3846,7 +4069,7 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         try:
@@ -3855,6 +4078,7 @@ class EClient(object):
             if self.serverVersion() < MIN_SERVER_VER_FUNDAMENTAL_DATA:
                 self.wrapper.error(
                     NO_VALID_ID,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support fundamental data request.",
@@ -3864,6 +4088,7 @@ class EClient(object):
             if self.serverVersion() < MIN_SERVER_VER_TRADING_CLASS:
                 self.wrapper.error(
                     NO_VALID_ID,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + "  It does not support conId parameter in reqFundamentalData.",
@@ -3872,7 +4097,6 @@ class EClient(object):
 
             flds = []
             flds += [
-                make_field(OUT.REQ_FUNDAMENTAL_DATA),
                 make_field(VERSION),
                 make_field(reqId),
             ]
@@ -3905,10 +4129,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_FUNDAMENTAL_DATA, msg)
 
     def cancelFundamentalData(self, reqId: TickerId):
         """Call this function to stop receiving fundamental data.
@@ -3918,12 +4142,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_FUNDAMENTAL_DATA:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support fundamental data request.",
             )
@@ -3932,12 +4157,11 @@ class EClient(object):
         VERSION = 1
 
         msg = (
-            make_field(OUT.CANCEL_FUNDAMENTAL_DATA)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(reqId)
         )
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_FUNDAMENTAL_DATA, msg)
 
     ########################################################################
     # News
@@ -3947,20 +4171,19 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_NEWS_PROVIDERS:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support news providers request.",
             )
             return
 
-        msg = make_field(OUT.REQ_NEWS_PROVIDERS)
-
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_NEWS_PROVIDERS, "")
 
     def reqNewsArticle(
         self,
@@ -3972,12 +4195,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_NEWS_ARTICLE:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support news article request.",
             )
@@ -3987,7 +4211,6 @@ class EClient(object):
             flds = []
 
             flds += [
-                make_field(OUT.REQ_NEWS_ARTICLE),
                 make_field(reqId),
                 make_field(providerCode),
                 make_field(articleId),
@@ -4006,10 +4229,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_NEWS_ARTICLE, msg)
 
     def reqHistoricalNews(
         self,
@@ -4024,12 +4247,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_HISTORICAL_NEWS:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support historical news request.",
             )
@@ -4039,7 +4263,6 @@ class EClient(object):
             flds = []
 
             flds += [
-                make_field(OUT.REQ_HISTORICAL_NEWS),
                 make_field(reqId),
                 make_field(conId),
                 make_field(providerCodes),
@@ -4061,10 +4284,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_HISTORICAL_NEWS, msg)
 
     #########################################################################
     # Display Groups
@@ -4082,12 +4305,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_LINKING:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support queryDisplayGroups request.",
             )
@@ -4096,12 +4320,11 @@ class EClient(object):
         VERSION = 1
 
         msg = (
-            make_field(OUT.QUERY_DISPLAY_GROUPS)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(reqId)
         )
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.QUERY_DISPLAY_GROUPS, msg)
 
     def subscribeToGroupEvents(self, reqId: int, groupId: int):
         """reqId:int - The unique number associated with the notification.
@@ -4111,12 +4334,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_LINKING:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support subscribeToGroupEvents request.",
@@ -4126,13 +4350,12 @@ class EClient(object):
         VERSION = 1
 
         msg = (
-            make_field(OUT.SUBSCRIBE_TO_GROUP_EVENTS)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(reqId)
             + make_field(groupId)
         )
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.SUBSCRIBE_TO_GROUP_EVENTS, msg)
 
     def updateDisplayGroup(self, reqId: int, contractInfo: str):
         """reqId:int - The requestId specified in subscribeToGroupEvents().
@@ -4147,12 +4370,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_LINKING:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support updateDisplayGroup request.",
             )
@@ -4162,17 +4386,16 @@ class EClient(object):
             VERSION = 1
 
             msg = (
-                make_field(OUT.UPDATE_DISPLAY_GROUP)
-                + make_field(VERSION)
+                make_field(VERSION)
                 + make_field(reqId)
                 + make_field(contractInfo)
             )
 
         except ClientException as ex:
-            self.wrapper.error(NO_VALID_ID, ex.code, ex.msg + ex.text)
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.UPDATE_DISPLAY_GROUP, msg)
 
     def unsubscribeFromGroupEvents(self, reqId: int):
         """reqId:int - The requestId specified in subscribeToGroupEvents()."""
@@ -4180,12 +4403,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_LINKING:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support unsubscribeFromGroupEvents request.",
@@ -4195,12 +4419,11 @@ class EClient(object):
         VERSION = 1
 
         msg = (
-            make_field(OUT.UNSUBSCRIBE_FROM_GROUP_EVENTS)
-            + make_field(VERSION)
+            make_field(VERSION)
             + make_field(reqId)
         )
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.UNSUBSCRIBE_FROM_GROUP_EVENTS, msg)
 
     def verifyRequest(self, apiName: str, apiVersion: str):
         """For IB's internal purpose. Allows to provide means of verification
@@ -4209,12 +4432,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_LINKING:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support verification request.",
             )
@@ -4223,6 +4447,7 @@ class EClient(object):
         if not self.extraAuth:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 BAD_MESSAGE.code(),
                 BAD_MESSAGE.msg()
                 + "  Intent to authenticate needs to be expressed during initial connect request.",
@@ -4233,17 +4458,16 @@ class EClient(object):
             VERSION = 1
 
             msg = (
-                make_field(OUT.VERIFY_REQUEST)
-                + make_field(VERSION)
+                make_field(VERSION)
                 + make_field(apiName)
                 + make_field(apiVersion)
             )
 
         except ClientException as ex:
-            self.wrapper.error(NO_VALID_ID, ex.code, ex.msg + ex.text)
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.VERIFY_REQUEST, msg)
 
     def verifyMessage(self, apiData: str):
         """For IB's internal purpose. Allows to provide means of verification
@@ -4252,12 +4476,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_LINKING:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support verification request.",
             )
@@ -4267,16 +4492,15 @@ class EClient(object):
             VERSION = 1
 
             msg = (
-                make_field(OUT.VERIFY_MESSAGE)
-                + make_field(VERSION)
+                make_field(VERSION)
                 + make_field(apiData)
             )
 
         except ClientException as ex:
-            self.wrapper.error(NO_VALID_ID, ex.code, ex.msg + ex.text)
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.VERIFY_MESSAGE, msg)
 
     def verifyAndAuthRequest(self, apiName: str, apiVersion: str, opaqueIsvKey: str):
         """For IB's internal purpose. Allows to provide means of verification
@@ -4285,12 +4509,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_LINKING:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support verification request.",
             )
@@ -4299,6 +4524,7 @@ class EClient(object):
         if not self.extraAuth:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 BAD_MESSAGE.code(),
                 BAD_MESSAGE.msg()
                 + "  Intent to authenticate needs to be expressed during initial connect request.",
@@ -4309,18 +4535,17 @@ class EClient(object):
             VERSION = 1
 
             msg = (
-                make_field(OUT.VERIFY_AND_AUTH_REQUEST)
-                + make_field(VERSION)
+                make_field(VERSION)
                 + make_field(apiName)
                 + make_field(apiVersion)
                 + make_field(opaqueIsvKey)
             )
 
         except ClientException as ex:
-            self.wrapper.error(NO_VALID_ID, ex.code, ex.msg + ex.text)
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.VERIFY_AND_AUTH_REQUEST, msg)
 
     def verifyAndAuthMessage(self, apiData: str, xyzResponse: str):
         """For IB's internal purpose. Allows to provide means of verification
@@ -4329,12 +4554,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_LINKING:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support verification request.",
             )
@@ -4344,17 +4570,16 @@ class EClient(object):
             VERSION = 1
 
             msg = (
-                make_field(OUT.VERIFY_AND_AUTH_MESSAGE)
-                + make_field(VERSION)
+                make_field(VERSION)
                 + make_field(apiData)
                 + make_field(xyzResponse)
             )
 
         except ClientException as ex:
-            self.wrapper.error(NO_VALID_ID, ex.code, ex.msg + ex.text)
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.VERIFY_AND_AUTH_MESSAGE, msg)
 
     def reqSecDefOptParams(
         self,
@@ -4375,12 +4600,13 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_SEC_DEF_OPT_PARAMS_REQ:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg()
                 + "  It does not support security definition option request.",
@@ -4390,7 +4616,6 @@ class EClient(object):
         try:
             flds = []
             flds += [
-                make_field(OUT.REQ_SEC_DEF_OPT_PARAMS),
                 make_field(reqId),
                 make_field(underlyingSymbol),
                 make_field(futFopExchange),
@@ -4401,10 +4626,10 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_SEC_DEF_OPT_PARAMS, msg)
 
     def reqSoftDollarTiers(self, reqId: int):
         """Requests pre-defined Soft Dollar Tiers. This is only supported for
@@ -4414,42 +4639,42 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
-        msg = make_field(OUT.REQ_SOFT_DOLLAR_TIERS) + make_field(reqId)
+        msg = make_field(reqId)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_SOFT_DOLLAR_TIERS, msg)
 
     def reqFamilyCodes(self):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_FAMILY_CODES:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support family codes request.",
             )
             return
 
-        msg = make_field(OUT.REQ_FAMILY_CODES)
-
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_FAMILY_CODES, "")
 
     def reqMatchingSymbols(self, reqId: int, pattern: str):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_REQ_MATCHING_SYMBOLS:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + "  It does not support matching symbols request.",
             )
@@ -4457,16 +4682,15 @@ class EClient(object):
 
         try:
             msg = (
-                make_field(OUT.REQ_MATCHING_SYMBOLS)
-                + make_field(reqId)
+                make_field(reqId)
                 + make_field(pattern)
             )
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_MATCHING_SYMBOLS, msg)
 
     def reqCompletedOrders(self, apiOnly: bool):
         """Call this function to request the completed orders. If apiOnly parameter
@@ -4477,71 +4701,74 @@ class EClient(object):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
-        msg = make_field(OUT.REQ_COMPLETED_ORDERS) + make_field(apiOnly)
+        msg = make_field(apiOnly)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_COMPLETED_ORDERS, msg)
 
     def reqWshMetaData(self, reqId: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_WSHE_CALENDAR:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(), 
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support WSHE Calendar API.",
             )
             return
 
         try:
-            msg = make_field(OUT.REQ_WSH_META_DATA) + make_field(reqId)
+            msg = make_field(reqId)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_WSH_META_DATA, msg)
 
     def cancelWshMetaData(self, reqId: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_WSHE_CALENDAR:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support WSHE Calendar API.",
             )
             return
 
-        msg = make_field(OUT.CANCEL_WSH_META_DATA) + make_field(reqId)
+        msg = make_field(reqId)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_WSH_META_DATA, msg)
 
     def reqWshEventData(
         self,
         reqId: int,
-        wshEventData: WshEventData,
-        MIN_SERVER_VER_WSH_EVENT_DATA_FILTERS_DATE=None,
+        wshEventData: WshEventData
     ):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_WSHE_CALENDAR:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support WSHE Calendar API.",
             )
@@ -4556,6 +4783,7 @@ class EClient(object):
             ):
                 self.wrapper.error(
                     NO_VALID_ID,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg() + " It does not support WSH event data filters.",
                 )
@@ -4569,6 +4797,7 @@ class EClient(object):
             ):
                 self.wrapper.error(
                     NO_VALID_ID,
+                    currentTimeMillis(),
                     UPDATE_TWS.code(),
                     UPDATE_TWS.msg()
                     + " It does not support WSH event data date filters.",
@@ -4577,7 +4806,6 @@ class EClient(object):
 
         try:
             flds = [
-                make_field(OUT.REQ_WSH_EVENT_DATA),
                 make_field(reqId),
                 make_field(wshEventData.conId),
             ]
@@ -4596,45 +4824,68 @@ class EClient(object):
             msg = "".join(flds)
 
         except ClientException as ex:
-            self.wrapper.error(reqId, ex.code, ex.msg + ex.text)
+            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
             return
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_WSH_EVENT_DATA, msg)
 
     def cancelWshEventData(self, reqId: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_WSHE_CALENDAR:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support WSHE Calendar API.",
             )
             return
 
-        msg = make_field(OUT.CANCEL_WSH_EVENT_DATA) + make_field(reqId)
+        msg = make_field(reqId)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.CANCEL_WSH_EVENT_DATA, msg)
 
     def reqUserInfo(self, reqId: int):
         self.logRequest(current_fn_name(), vars())
 
         if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
             return
 
         if self.serverVersion() < MIN_SERVER_VER_USER_INFO:
             self.wrapper.error(
                 NO_VALID_ID,
+                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support user info requests.",
             )
             return
 
-        msg = make_field(OUT.REQ_USER_INFO) + make_field(reqId)
+        msg = make_field(reqId)
 
-        self.sendMsg(msg)
+        self.sendMsg(OUT.REQ_USER_INFO, msg)
+        
+    def reqCurrentTimeInMillis(self):
+        """Asks the current system time in milliseconds on the server side."""
+
+        self.logRequest(current_fn_name(), vars())
+
+        if not self.isConnected():
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            return
+
+        if self.serverVersion() < MIN_SERVER_VER_CURRENT_TIME_IN_MILLIS:
+            self.wrapper.error(
+                NO_VALID_ID,
+                currentTimeMillis(),
+                UPDATE_TWS.code(),
+                UPDATE_TWS.msg() + " It does not support current time in millis requests.",
+            )
+            return
+        
+        self.sendMsg(OUT.REQ_CURRENT_TIME_IN_MILLIS, "")
+

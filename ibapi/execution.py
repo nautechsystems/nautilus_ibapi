@@ -1,15 +1,18 @@
 """
-Copyright (C) 2023 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
+Copyright (C) 2025 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
 
 
 from ibapi.object_implem import Object
 from ibapi.const import UNSET_DECIMAL
+from ibapi.const import UNSET_INTEGER
 from ibapi.utils import decimalMaxString
 from ibapi.utils import intMaxString
 from ibapi.utils import floatMaxString
-
+from ibapi.utils import longMaxString
+from ibapi.utils import getEnumTypeName
+from enum import Enum
 
 class Execution(Object):
     def __init__(self):
@@ -32,12 +35,14 @@ class Execution(Object):
         self.modelCode = ""
         self.lastLiquidity = 0
         self.pendingPriceRevision = False
+        self.submitter = ""
+        self.optExerciseOrLapseType = OptionExerciseType.NoneItem
 
     def __str__(self):
         return (
             "ExecId: %s, Time: %s, Account: %s, Exchange: %s, Side: %s, Shares: %s, Price: %s, PermId: %s, "
             "ClientId: %s, OrderId: %s, Liquidation: %s, CumQty: %s, AvgPrice: %s, OrderRef: %s, EvRule: %s, "
-            "EvMultiplier: %s, ModelCode: %s, LastLiquidity: %s, PendingPriceRevision: %s"
+            "EvMultiplier: %s, ModelCode: %s, LastLiquidity: %s, PendingPriceRevision: %s, Submitter: %s, OptExerciseOrLapseType: %s"
             % (
                 self.execId,
                 self.time,
@@ -46,7 +51,7 @@ class Execution(Object):
                 self.side,
                 decimalMaxString(self.shares),
                 floatMaxString(self.price),
-                intMaxString(self.permId),
+                longMaxString(self.permId),
                 intMaxString(self.clientId),
                 intMaxString(self.orderId),
                 intMaxString(self.liquidation),
@@ -58,6 +63,8 @@ class Execution(Object):
                 self.modelCode,
                 intMaxString(self.lastLiquidity),
                 self.pendingPriceRevision,
+                self.submitter,
+                getEnumTypeName(OptionExerciseType, self.optExerciseOrLapseType),
             )
         )
 
@@ -72,3 +79,17 @@ class ExecutionFilter(Object):
         self.secType = ""
         self.exchange = ""
         self.side = ""
+        self.lastNDays = UNSET_INTEGER
+        self.specificDates = None
+
+class OptionExerciseType(Enum):
+    NoneItem = (-1, "None")
+    Exercise = (1, "Exercise")
+    Lapse = (2, "Lapse")
+    DoNothing = (3, "DoNothing")
+    Assigned = (100, "Assigned ")
+    AutoexerciseClearing = (101, "AutoexerciseClearing")
+    Expired = (102, "Expired")
+    Netting = (103, "Netting")
+    AutoexerciseTrading = (200, "AutoexerciseTrading")
+

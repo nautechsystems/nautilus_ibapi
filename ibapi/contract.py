@@ -1,10 +1,11 @@
 """
-Copyright (C) 2024 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
+Copyright (C) 2025 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
 
 from ibapi.object_implem import Object
-from ibapi.const import UNSET_DECIMAL
+from ibapi.const import UNSET_DECIMAL, UNSET_DOUBLE
+
 from ibapi.utils import intMaxString
 from ibapi.utils import floatMaxString
 from ibapi.utils import decimalMaxString
@@ -65,7 +66,7 @@ class Contract(Object):
         self.secType = ""
         self.lastTradeDateOrContractMonth = ""
         self.lastTradeDate = ""
-        self.strike = 0.0  # float !!
+        self.strike = UNSET_DOUBLE  # float !!
         self.right = ""
         self.multiplier = ""
         self.exchange = ""
@@ -88,13 +89,15 @@ class Contract(Object):
         self.deltaNeutralContract = None
 
     def __str__(self):
-        s = ",".join(
-            (
-                str(self.conId),
+        s = (
+            "ConId: %s, Symbol: %s, SecType: %s, LastTradeDateOrContractMonth: %s, Strike: %s, Right: %s, Multiplier: %s, Exchange: %s, PrimaryExchange: %s, "
+            "Currency: %s, LocalSymbol: %s, TradingClass: %s, IncludeExpired: %s, SecIdType: %s, SecId: %s, Description: %s, "
+            "IssuerId: %s"
+            % (
+                intMaxString(self.conId),
                 str(self.symbol),
                 str(self.secType),
                 str(self.lastTradeDateOrContractMonth),
-                str(self.lastTradeDate),
                 floatMaxString(self.strike),
                 str(self.right),
                 str(self.multiplier),
@@ -110,7 +113,7 @@ class Contract(Object):
                 str(self.issuerId),
             )
         )
-        s += "combo:" + self.comboLegsDescrip
+        s += "Combo:" + self.comboLegsDescrip
 
         if self.comboLegs:
             for leg in self.comboLegs:
@@ -260,19 +263,3 @@ class FundDistributionPolicyIndicator(Enum):
     NoneItem = ("None", "None")
     AccumulationFund = ("N", "Accumulation Fund")
     IncomeFund = ("Y", "Income Fund")
-
-def listOfValues(cls):
-    return list(map(lambda c: c, cls))
-
-def getEnumTypeFromString(cls, stringIn):
-    for item in cls:
-        if item.value[0] == stringIn:
-            return item
-    return listOfValues(cls)[0]
-
-def getEnumTypeName(cls, valueIn):
-    for item in cls:
-        if item == valueIn:
-            return item.value[1]
-    return listOfValues(cls)[0].value[1]
-
