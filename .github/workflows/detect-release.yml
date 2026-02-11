@@ -18,7 +18,7 @@ jobs:
         id: version
         run: |
           response=$(curl -s https://interactivebrokers.github.io)
-          file_url=https://$(echo "$response" | grep -oP '(interactivebrokers.*twsapi_macunix.*zip)(?=.*Stable)')
+          file_url=https://$(echo "$response" | grep -oP '(interactivebrokers.*twsapi_macunix.*zip)(?=.*Latest)')
           file_name=$(echo "$file_url" | grep -oP 'twsapi_macunix.*.zip')
           build_version=$(echo "$file_url" | grep -oP '(?<=twsapi_macunix.).*(?=.zip)' | sed 's/^\([0-9][0-9]\)\(.*\)$/\1.\2/')
           echo "file_url=$file_url" >> $GITHUB_OUTPUT
@@ -55,21 +55,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create 'ibapi-stable@${{ steps.version.outputs.build_version }}' \
-            -t 'IB API Stable ${{ steps.version.outputs.build_version }}' \
-            -n 'IB API Stable ${{ steps.version.outputs.build_version }} release files'
+          gh release create 'ibapi-latest@${{ steps.version.outputs.build_version }}' \
+            -t 'IB API Latest ${{ steps.version.outputs.build_version }}' \
+            -n 'IB API Latest ${{ steps.version.outputs.build_version }} release files'
 
       - name: Create PR
         if: ${{ steps.check-update.outputs.has_update == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          t_branch='update-stable-to-${{ steps.version.outputs.build_version }}'
+          t_branch='update-latest-to-${{ steps.version.outputs.build_version }}'
           git config user.name github-actions
           git config user.email github-actions@github.com
           git pull
           git checkout -b "$t_branch" origin/main
           git add -A
-          git commit -m 'Update Stable to `${{ steps.version.outputs.build_version }}`'
+          git commit -m 'Update Latest to `${{ steps.version.outputs.build_version }}`'
           git push --set-upstream origin "$t_branch"
           gh pr create --base main --fill
