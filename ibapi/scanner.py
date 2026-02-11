@@ -17,6 +17,7 @@ class ScanData(Object):
         benchmark="",
         projection="",
         legsStr="",
+        marketName="",
     ):
         self.contract = contract
         self.rank = rank
@@ -24,10 +25,11 @@ class ScanData(Object):
         self.benchmark = benchmark
         self.projection = projection
         self.legsStr = legsStr
+        self.marketName = marketName
 
     def __str__(self):
         return (
-            "Rank: %d, Symbol: %s, SecType: %s, Currency: %s, Distance: %s, Benchmark: %s, Projection: %s, Legs String: %s"
+            "Rank: %d, Symbol: %s, SecType: %s, Currency: %s, Distance: %s, Benchmark: %s, Projection: %s, Legs String: %s, MarketName: %s"
             % (
                 self.rank,
                 self.contract.symbol,
@@ -37,6 +39,7 @@ class ScanData(Object):
                 self.benchmark,
                 self.projection,
                 self.legsStr,
+                self.marketName
             )
         )
 

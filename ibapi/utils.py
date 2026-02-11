@@ -187,7 +187,7 @@ def isAsciiPrintable(val):
 
 
 def decimalMaxString(val: Decimal):
-    val = Decimal(val)
+    val = Decimal(str(val)) if type(val) is float else Decimal(val)
     return f"{val:f}" if val != UNSET_DECIMAL else ""
 
 
