@@ -46,6 +46,7 @@
     <Compile Include="scanner.py" />
     <Compile Include="server_versions.py" />
     <Compile Include="softdollartier.py" />
+    <Compile Include="sync_wrapper.py" />
     <Compile Include="tag_value.py" />
     <Compile Include="ticktype.py" />
     <Compile Include="utils.py" />

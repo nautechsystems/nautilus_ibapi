@@ -15,7 +15,7 @@ setup(
     name="ibapi",
     version=get_version_string(),
     packages=["ibapi","ibapi/protobuf"],
-    install_requires=["protobuf==5.29.3"],
+    install_requires=["protobuf==5.29.5"],
     url="https://interactivebrokers.github.io/tws-api",
     license="IB API Non-Commercial License or the IB API Commercial License",
     author="IBG LLC",
