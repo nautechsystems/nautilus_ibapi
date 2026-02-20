@@ -48,7 +48,8 @@ from ibapi.errors import (
     FAIL_SEND_REQHISTORICALTICKS, FAIL_SEND_REQTICKBYTICKDATA, FAIL_SEND_CANCELTICKBYTICKDATA,
     FAIL_SEND_REQCOMPLETEDORDERS, FAIL_SEND_REQ_WSH_META_DATA, FAIL_SEND_CAN_WSH_META_DATA,
     FAIL_SEND_REQ_WSH_EVENT_DATA, FAIL_SEND_CAN_WSH_EVENT_DATA, FAIL_SEND_REQ_USER_INFO,
-    FAIL_SEND_REQCURRTIMEINMILLIS, FAIL_SEND_CANCEL_CONTRACT_DATA, FAIL_SEND_CANCEL_HISTORICAL_TICKS
+    FAIL_SEND_REQCURRTIMEINMILLIS, FAIL_SEND_CANCEL_CONTRACT_DATA, FAIL_SEND_CANCEL_HISTORICAL_TICKS,
+    FAIL_SEND_REQCONFIG, FAIL_SEND_UPDATECONFIG
 )
 from ibapi.execution import ExecutionFilter
 from ibapi.message import OUT
@@ -152,7 +153,8 @@ from ibapi.server_versions import (
     MIN_SERVER_VER_ADDITIONAL_ORDER_PARAMS_1,
     MIN_SERVER_VER_ADDITIONAL_ORDER_PARAMS_2,
     MIN_SERVER_VER_ATTACHED_ORDERS,
-    MIN_SERVER_VER_CONFIG
+    MIN_SERVER_VER_CONFIG,
+    MIN_SERVER_VER_UPDATE_CONFIG
 )
 
 from ibapi.utils import ClientException, log_
@@ -274,6 +276,7 @@ from ibapi.protobuf.UnsubscribeFromGroupEventsRequest_pb2 import UnsubscribeFrom
 from ibapi.protobuf.MarketDepthExchangesRequest_pb2 import MarketDepthExchangesRequest as MarketDepthExchangesRequestProto
 from ibapi.protobuf.AttachedOrders_pb2 import AttachedOrders as AttachedOrdersProto
 from ibapi.protobuf.ConfigRequest_pb2 import ConfigRequest as ConfigRequestProto
+from ibapi.protobuf.UpdateConfigRequest_pb2 import UpdateConfigRequest as UpdateConfigRequestProto
 
 # TODO: use pylint
 
@@ -6223,7 +6226,7 @@ class EClient(object):
             if self.serverVersion() >= MIN_SERVER_VER_NEWS_QUERY_ORIGINS:
                 historicalNewsOptionsStr = ""
                 if historicalNewsOptions:
-                    for tagValue in historicalNewsOptionsStr:
+                    for tagValue in historicalNewsOptions:
                         historicalNewsOptionsStr += str(tagValue)
                 flds += [
                     make_field(historicalNewsOptionsStr),
@@ -7143,7 +7146,6 @@ class EClient(object):
             self.wrapper.error(
                 NO_VALID_ID,
                 currentTimeMillis(),
-                currentTimeMillis(),
                 UPDATE_TWS.code(),
                 UPDATE_TWS.msg() + " It does not support WSHE Calendar API.",
             )
@@ -7469,4 +7471,32 @@ class EClient(object):
             return
         except Exception as ex:
             self.wrapper.error(reqId, currentTimeMillis(), FAIL_SEND_REQCONFIG.code(), FAIL_SEND_REQCONFIG.msg() + str(ex))
+            return
+
+    def updateConfigProtoBuf(self, updateConfigRequestProto: UpdateConfigRequestProto):
+        if updateConfigRequestProto is None:
+            return
+        
+        self.logRequest(current_fn_name(), vars())
+    
+        reqId = updateConfigRequestProto.reqId if updateConfigRequestProto.HasField('reqId') else NO_VALID_ID
+    
+        if not self.isConnected():
+            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
+            return
+
+        if self.serverVersion() < MIN_SERVER_VER_UPDATE_CONFIG:
+            self.wrapper.error(reqId, currentTimeMillis(), UPDATE_TWS.code(), UPDATE_TWS.msg() + "  It does not support update config requests.")
+            return
+        
+        try:
+            serializedString = updateConfigRequestProto.SerializeToString()
+        
+            self.sendMsgProtoBuf(OUT.UPDATE_CONFIG + PROTOBUF_MSG_ID, serializedString)
+        
+        except ClientException as ex:
+            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), ex.code, ex.msg + ex.text)
+            return
+        except Exception as ex:
+            self.wrapper.error(reqId, currentTimeMillis(), FAIL_SEND_UPDATECONFIG.code(), FAIL_SEND_UPDATECONFIG.msg() + str(ex))
             return

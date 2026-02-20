@@ -5,7 +5,7 @@ Copyright (C) 2023 Interactive Brokers LLC. All rights reserved. This code is su
 
 """ Package implementing the Python API for the TWS/IB Gateway """
 
-VERSION = {"major": 10, "minor": 43, "micro": 2}
+VERSION = {"major": 10, "minor": 44, "micro": 1}
 
 
 def get_version_string():

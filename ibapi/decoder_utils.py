@@ -78,7 +78,7 @@ def decodeComboLegs(contractProto: ContractProto) -> list[ComboLeg]:
             if comboLegProto.HasField('action'): comboLeg.action = comboLegProto.action
             if comboLegProto.HasField('exchange'): comboLeg.exchange = comboLegProto.exchange
             if comboLegProto.HasField('openClose'): comboLeg.openClose = comboLegProto.openClose
-            if comboLegProto.HasField('shortSalesSlot'): comboLeg.shortSalesSlot = comboLegProto.shortSalesSlot
+            if comboLegProto.HasField('shortSalesSlot'): comboLeg.shortSaleSlot = comboLegProto.shortSalesSlot
             if comboLegProto.HasField('designatedLocation'): comboLeg.designatedLocation = comboLegProto.designatedLocation
             if comboLegProto.HasField('exemptCode'): comboLeg.exemptCode = comboLegProto.exemptCode
             comboLegs.append(comboLeg)
@@ -188,7 +188,7 @@ def decodeOrder(orderId: int, contractProto: ContractProto, orderProto: OrderPro
     if orderProto.HasField('deltaNeutralOrderType'): order.deltaNeutralOrderType = orderProto.deltaNeutralOrderType
     if orderProto.HasField('deltaNeutralAuxPrice'): order.deltaNeutralAuxPrice = orderProto.deltaNeutralAuxPrice
     if orderProto.HasField('deltaNeutralConId'): order.deltaNeutralConId = orderProto.deltaNeutralConId
-    if orderProto.HasField('deltaNeutralSettlingFirm'): order.ddeltaNeutralSettlingFirm = orderProto.deltaNeutralSettlingFirm
+    if orderProto.HasField('deltaNeutralSettlingFirm'): order.deltaNeutralSettlingFirm = orderProto.deltaNeutralSettlingFirm
     if orderProto.HasField('deltaNeutralClearingAccount'): order.deltaNeutralClearingAccount = orderProto.deltaNeutralClearingAccount
     if orderProto.HasField('deltaNeutralClearingIntent'): order.deltaNeutralClearingIntent = orderProto.deltaNeutralClearingIntent
     if orderProto.HasField('deltaNeutralOpenClose'): order.deltaNeutralOpenClose = orderProto.deltaNeutralOpenClose
@@ -411,7 +411,7 @@ def decodeTagValueList(protoMap: dict[str, str]) -> list[TagValue]:
 def decodeOrderState(orderStateProto: OrderStateProto) -> OrderState:
     orderState = OrderState()
     if orderStateProto.HasField('status'): orderState.status = orderStateProto.status
-    if orderStateProto.HasField('initMarginBefore'): orderState.initMarginBefore = orderStateProto.initMarginBefore
+    if orderStateProto.HasField('initMarginBefore'): orderState.initMarginBefore = decimalMaxString(orderStateProto.initMarginBefore)
     if orderStateProto.HasField('maintMarginBefore'): orderState.maintMarginBefore = decimalMaxString(orderStateProto.maintMarginBefore)
     if orderStateProto.HasField('equityWithLoanBefore'): orderState.equityWithLoanBefore = decimalMaxString(orderStateProto.equityWithLoanBefore)
     if orderStateProto.HasField('initMarginChange'): orderState.initMarginChange = decimalMaxString(orderStateProto.initMarginChange)
@@ -475,7 +475,7 @@ def decodeContractDetails(contractProto: ContractProto, contractDetailsProto: Co
     if contractDetailsProto.HasField('priceMagnifier'): contractDetails.priceMagnifier = contractDetailsProto.priceMagnifier
     if contractDetailsProto.HasField('orderTypes'): contractDetails.orderTypes = contractDetailsProto.orderTypes
     if contractDetailsProto.HasField('validExchanges'): contractDetails.validExchanges = contractDetailsProto.validExchanges
-    if contractDetailsProto.HasField('underConId'): contractDetails.underConid = contractDetailsProto.underConId
+    if contractDetailsProto.HasField('underConId'): contractDetails.underConId = contractDetailsProto.underConId
     if contractDetailsProto.HasField('longName'): contractDetails.longName = contractDetailsProto.longName
     if contractDetailsProto.HasField('contractMonth'): contractDetails.contractMonth = contractDetailsProto.contractMonth
     if contractDetailsProto.HasField('industry'): contractDetails.industry = contractDetailsProto.industry
@@ -499,6 +499,8 @@ def decodeContractDetails(contractProto: ContractProto, contractDetailsProto: Co
     if contractDetailsProto.HasField('sizeIncrement'): contractDetails.sizeIncrement = Decimal(contractDetailsProto.sizeIncrement)
     if contractDetailsProto.HasField('suggestedSizeIncrement'): contractDetails.suggestedSizeIncrement = Decimal(contractDetailsProto.suggestedSizeIncrement)
     if contractDetailsProto.HasField('minAlgoSize'): contractDetails.minAlgoSize = Decimal(contractDetailsProto.minAlgoSize)
+    if contractDetailsProto.HasField('lastPricePrecision'): contractDetails.lastPricePrecision = Decimal(contractDetailsProto.lastPricePrecision)
+    if contractDetailsProto.HasField('lastSizePrecision'): contractDetails.lastSizePrecision = Decimal(contractDetailsProto.lastSizePrecision)
 
     setLastTradeDate(contract.lastTradeDateOrContractMonth, contractDetails, isBond);
 

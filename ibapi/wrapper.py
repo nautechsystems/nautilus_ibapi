@@ -130,6 +130,7 @@ from ibapi.protobuf.DisplayGroupList_pb2 import DisplayGroupList as DisplayGroup
 from ibapi.protobuf.DisplayGroupUpdated_pb2 import DisplayGroupUpdated as DisplayGroupUpdatedProto
 from ibapi.protobuf.MarketDepthExchanges_pb2 import MarketDepthExchanges as MarketDepthExchangesProto
 from ibapi.protobuf.ConfigResponse_pb2 import ConfigResponse as ConfigResponseProto
+from ibapi.protobuf.UpdateConfigResponse_pb2 import UpdateConfigResponse as UpdateConfigResponseProto
 
 logger = logging.getLogger(__name__)
 
@@ -1180,4 +1181,7 @@ class EWrapper:
         logAnswer(current_fn_name(), vars())
 
     def configResponseProtoBuf(self, configResponseProto: ConfigResponseProto):
+        logAnswer(current_fn_name(), vars())
+
+    def updateConfigResponseProtoBuf(self, updateConfigResponseProto: UpdateConfigResponseProto):
         logAnswer(current_fn_name(), vars())
