@@ -137,14 +137,16 @@ class TWSSyncWrapper(EWrapper, EClient):
 				del self.response_events[event_key]
 			if event_key in self.response_data:
 				del self.response_data[event_key]
-				raise ResponseTimeout(f"No response received for {event_name} request {req_id} within {timeout} seconds")
+			raise ResponseTimeout(f"No response received for {event_name} request {req_id} within {timeout} seconds")
 
 		# Get the response data
 		response = self.response_data.get(event_key)
 
 		# Clean up
-		del self.response_events[event_key]
-		del self.response_data[event_key]
+		if event_key in self.response_events:
+			del self.response_events[event_key]
+		if event_key in self.response_data:
+			del self.response_data[event_key]
 
 		return response
 
@@ -182,7 +184,7 @@ class TWSSyncWrapper(EWrapper, EClient):
 
 		if reqId not in self.errors:
 			self.errors[reqId] = []
-			self.errors[reqId].append(error_info)
+		self.errors[reqId].append(error_info)
 
 		# Set event for any waiting synchronous calls
 		self._set_event(reqId, "error", error_info)
@@ -443,7 +445,8 @@ class TWSSyncWrapper(EWrapper, EClient):
 		Raises:
 		ResponseTimeout: If no response is received within the timeout period
 		"""
-		timeout = 5 if order.orderType in ["LMT", "MKT"] else 2
+		if timeout is None:
+			timeout = 5 if order.orderType in ["LMT", "MKT"] else 2
 
 		order_id = self.get_next_valid_id()
 		order.orderId = order_id
@@ -615,7 +618,8 @@ class TWSSyncWrapper(EWrapper, EClient):
 		Raises:
 		ResponseTimeout: If no response is received within the timeout period
 		"""
-		timeout = 11 if snapshot == True else 5
+		if timeout is None:
+			timeout = 11 if snapshot == True else 5
 		req_id = self.get_next_valid_id()
 
 		# Clear existing market data for this request

@@ -17,7 +17,7 @@ class CommTestCase(unittest.TestCase):
 
     def test_make_msg(self):
         text = "ABCD"
-        msg = comm.make_msg(text)
+        msg = comm.make_initial_msg(text)
 
         size = struct.unpack("!I", msg[0:4])[0]
 
@@ -34,7 +34,7 @@ class CommTestCase(unittest.TestCase):
 
     def test_read_msg(self):
         text = "ABCD"
-        msg = comm.make_msg(text)
+        msg = comm.make_initial_msg(text)
 
         (size, text2, rest) = comm.read_msg(msg)
 
@@ -46,7 +46,7 @@ class CommTestCase(unittest.TestCase):
         text1 = "ABCD"
         text2 = "123"
 
-        msg = comm.make_msg(comm.make_field(text1) + comm.make_field(text2))
+        msg = comm.make_initial_msg(comm.make_field(text1) + comm.make_field(text2))
 
         (size, text, rest) = comm.read_msg(msg)
         fields = comm.read_fields(text)

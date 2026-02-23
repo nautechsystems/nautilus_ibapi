@@ -156,6 +156,8 @@ class ContractDetails(Object):
         self.sizeIncrement = UNSET_DECIMAL
         self.suggestedSizeIncrement = UNSET_DECIMAL
         self.minAlgoSize = UNSET_DECIMAL
+        self.lastPricePrecision = UNSET_DECIMAL
+        self.lastSizePrecision = UNSET_DECIMAL
         # BOND values
         self.cusip = ""
         self.ratings = ""
@@ -241,6 +243,8 @@ class ContractDetails(Object):
                 decimalMaxString(self.sizeIncrement),
                 decimalMaxString(self.suggestedSizeIncrement),
                 decimalMaxString(self.minAlgoSize),
+                decimalMaxString(self.lastPricePrecision),
+                decimalMaxString(self.lastSizePrecision),
                 str(self.ineligibilityReasonList),
                 str(self.eventContract1),
                 str(self.eventContractDescription1),

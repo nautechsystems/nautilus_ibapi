@@ -117,6 +117,7 @@ from ibapi.protobuf.DisplayGroupList_pb2 import DisplayGroupList as DisplayGroup
 from ibapi.protobuf.DisplayGroupUpdated_pb2 import DisplayGroupUpdated as DisplayGroupUpdatedProto
 from ibapi.protobuf.MarketDepthExchanges_pb2 import MarketDepthExchanges as MarketDepthExchangesProto
 from ibapi.protobuf.ConfigResponse_pb2 import ConfigResponse as ConfigResponseProto
+from ibapi.protobuf.UpdateConfigResponse_pb2 import UpdateConfigResponse as UpdateConfigResponseProto
 
 logger = logging.getLogger(__name__)
 
@@ -714,7 +715,7 @@ class Decoder(Object):
         # decode contract details fields
         if not contractDataProto.HasField('contract') or not contractDataProto.HasField('contractDetails'):
             return
-        contractDetails = decodeContractDetails(contractDataProto.contract, contractDataProto.contractDetails, False)
+        contractDetails = decodeContractDetails(contractDataProto.contract, contractDataProto.contractDetails, True)
 
         self.wrapper.bondContractDetails(reqId, contractDetails)
 
@@ -1104,28 +1105,28 @@ class Decoder(Object):
         tickType = tickOptionComputationProto.tickType if tickOptionComputationProto.HasField('tickType') else UNSET_INTEGER
         tickAttrib = tickOptionComputationProto.tickAttrib if tickOptionComputationProto.HasField('tickAttrib') else UNSET_INTEGER
         impliedVol = tickOptionComputationProto.impliedVol if tickOptionComputationProto.HasField('impliedVol') else None
-        if impliedVol < 0:  # -1 is the "not computed" indicator
+        if impliedVol is not None and impliedVol < 0:  # -1 is the "not computed" indicator
             impliedVol = None
         delta = tickOptionComputationProto.delta if tickOptionComputationProto.HasField('delta') else None
-        if delta == -2:  # -2 is the "not computed" indicator
+        if delta is not None and delta == -2:  # -2 is the "not computed" indicator
             delta = None
         optPrice = tickOptionComputationProto.optPrice if tickOptionComputationProto.HasField('optPrice') else None
-        if optPrice == -1:  # -1 is the "not computed" indicator
+        if optPrice is not None and optPrice == -1:  # -1 is the "not computed" indicator
             optPrice = None
         pvDividend = tickOptionComputationProto.pvDividend if tickOptionComputationProto.HasField('pvDividend') else None
-        if pvDividend == -1:  # -1 is the "not computed" indicator
+        if pvDividend is not None and pvDividend == -1:  # -1 is the "not computed" indicator
             pvDividend = None
         gamma = tickOptionComputationProto.gamma if tickOptionComputationProto.HasField('gamma') else None
-        if gamma == -2:  # -2 is the "not yet computed" indicator
+        if gamma is not None and gamma == -2:  # -2 is the "not yet computed" indicator
             gamma = None
         vega = tickOptionComputationProto.vega if tickOptionComputationProto.HasField('vega') else None
-        if vega == -2:  # -2 is the "not yet computed" indicator
+        if vega is not None and vega == -2:  # -2 is the "not yet computed" indicator
             vega = None
         theta = tickOptionComputationProto.theta if tickOptionComputationProto.HasField('theta') else None
-        if theta == -2:  # -2 is the "not yet computed" indicator
+        if theta is not None and theta == -2:  # -2 is the "not yet computed" indicator
             theta = None
         undPrice = tickOptionComputationProto.undPrice if tickOptionComputationProto.HasField('undPrice') else None
-        if undPrice == -1:  # -1 is the "not computed" indicator
+        if undPrice is not None and undPrice == -1:  # -1 is the "not computed" indicator
             undPrice = None
 
         self.wrapper.tickOptionComputation(reqId, tickType, tickAttrib, impliedVol, delta, optPrice, pvDividend, gamma, vega, theta, undPrice)
@@ -2654,6 +2655,12 @@ class Decoder(Object):
         configResponseProto.ParseFromString(protobuf)
     
         self.wrapper.configResponseProtoBuf(configResponseProto)
+
+    def processUpdateConfigResponseProtoBuf(self, protobuf):
+        updateConfigResponseProto = UpdateConfigResponseProto()
+        updateConfigResponseProto.ParseFromString(protobuf)
+    
+        self.wrapper.updateConfigResponseProtoBuf(updateConfigResponseProto)
     
     ######################################################################
 
@@ -2777,7 +2784,7 @@ class Decoder(Object):
             if handleInfo.processMeth is not None:
                 handleInfo.processMeth(self, protoBuf)
         except BadMessage:
-            theBadMsg = ",".join(protoBuf)
+            theBadMsg = repr(protoBuf)
             self.wrapper.error(
                 NO_VALID_ID, currentTimeMillis(), BAD_MESSAGE.code(), BAD_MESSAGE.msg() + theBadMsg
             )
@@ -2959,5 +2966,6 @@ class Decoder(Object):
         IN.DISPLAY_GROUP_LIST: HandleInfo(proc=processDisplayGroupListMsgProtoBuf),
         IN.DISPLAY_GROUP_UPDATED: HandleInfo(proc=processDisplayGroupUpdatedMsgProtoBuf),
         IN.MKT_DEPTH_EXCHANGES: HandleInfo(proc=processMktDepthExchangesMsgProtoBuf),
-        IN.CONFIG_RESPONSE: HandleInfo(proc=processConfigResponseProtoBuf)
+        IN.CONFIG_RESPONSE: HandleInfo(proc=processConfigResponseProtoBuf),
+        IN.UPDATE_CONFIG_RESPONSE: HandleInfo(proc=processUpdateConfigResponseProtoBuf)
     }

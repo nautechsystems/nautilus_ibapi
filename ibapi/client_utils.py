@@ -224,7 +224,7 @@ def createComboLegProto(comboLeg: ComboLeg, perLegPrice: float) -> ComboLegProto
 @staticmethod
 def createOrderProto(order: Order) -> OrderProto:
     orderProto = OrderProto()
-    if isValidIntValue(order.clientId): order.clientId = order.clientId
+    if isValidIntValue(order.clientId): orderProto.clientId = order.clientId
     if isValidLongValue(order.permId): orderProto.permId = order.permId
     if isValidIntValue(order.parentId): orderProto.parentId = order.parentId
     if order.action: orderProto.action = order.action
