@@ -217,6 +217,7 @@ def decodeOrder(orderId: int, contractProto: ContractProto, orderProto: OrderPro
     if orderProto.HasField('scaleRandomPercent'): order.scaleRandomPercent = orderProto.scaleRandomPercent
     if orderProto.HasField('hedgeType'): order.hedgeType = orderProto.hedgeType
     if orderProto.HasField('hedgeType') and orderProto.HasField('hedgeParam') and orderProto.hedgeType: order.hedgeParam = orderProto.hedgeParam
+    if orderProto.HasField('hedgeType') and orderProto.HasField('hedgeMaxSize'): order.hedgeMaxSize = orderProto.hedgeMaxSize
     if orderProto.HasField('optOutSmartRouting'): order.optOutSmartRouting = orderProto.optOutSmartRouting
     if orderProto.HasField('clearingAccount'): order.clearingAccount = orderProto.clearingAccount
     if orderProto.HasField('clearingIntent'): order.clearingIntent = orderProto.clearingIntent

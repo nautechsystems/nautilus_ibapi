@@ -10,6 +10,8 @@ import time
 import datetime
 
 from decimal import Decimal
+from google.protobuf import text_format
+from google.protobuf.message import Message
 
 from ibapi.const import (
     UNSET_INTEGER,
@@ -230,4 +232,7 @@ def getEnumTypeName(cls, valueIn):
         if item == valueIn:
             return item.value[1]
     return listOfValues(cls)[0].value[1]
+
+def printProtoSingleLine(header:str, message: Message):
+    print(header, text_format.MessageToString(message, as_one_line=True))
 

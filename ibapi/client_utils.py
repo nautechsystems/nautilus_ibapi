@@ -283,6 +283,7 @@ def createOrderProto(order: Order) -> OrderProto:
     if order.scaleTable: orderProto.scaleTable = order.scaleTable
     if order.hedgeType: orderProto.hedgeType = order.hedgeType
     if order.hedgeParam: orderProto.hedgeParam = order.hedgeParam
+    if isValidIntValue(order.hedgeMaxSize): orderProto.hedgeMaxSize = order.hedgeMaxSize
 
     if order.algoStrategy: orderProto.algoStrategy = order.algoStrategy
     fillTagValueList(order.algoParams, orderProto.algoParams)
