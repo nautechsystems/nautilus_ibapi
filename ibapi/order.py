@@ -139,6 +139,7 @@ class Order(Object):
         # HEDGE ORDERS
         self.hedgeType = ""  # 'D' - delta, 'B' - beta, 'F' - FX, 'P' - pair
         self.hedgeParam = ""  # 'beta=X' value for beta hedge, 'ratio=Y' for pair hedge
+        self.hedgeMaxSize = UNSET_INTEGER  # type: int
 
         # Clearing info
         self.account = ""  # IB account

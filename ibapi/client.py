@@ -154,7 +154,8 @@ from ibapi.server_versions import (
     MIN_SERVER_VER_ADDITIONAL_ORDER_PARAMS_2,
     MIN_SERVER_VER_ATTACHED_ORDERS,
     MIN_SERVER_VER_CONFIG,
-    MIN_SERVER_VER_UPDATE_CONFIG
+    MIN_SERVER_VER_UPDATE_CONFIG,
+    MIN_SERVER_VER_HEDGE_MAX_SIZE
 )
 
 from ibapi.utils import ClientException, log_
@@ -2827,6 +2828,11 @@ class EClient(object):
 
             if order.HasField('whatIfType'):
                 return "whatIfType"
+
+        if self.serverVersion() < MIN_SERVER_VER_HEDGE_MAX_SIZE:
+            if order.HasField('hedgeMaxSize'):
+                return "hedgeMaxSize"
+
         return None
 
     def validateAttachedOrdersParameters(self, attachedOrders: AttachedOrdersProto) -> str | None:
