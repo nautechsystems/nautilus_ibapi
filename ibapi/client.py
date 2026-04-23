@@ -376,7 +376,12 @@ class EClient(object):
 
     def useProtoBuf(self, msgId: int) -> bool:
         unifiedVersion = PROTOBUF_MSG_IDS.get(msgId)
-        return unifiedVersion is not None and unifiedVersion <= self.serverVersion()
+        serverVersion = self.serverVersion()
+        return (
+            unifiedVersion is not None
+            and serverVersion is not None
+            and unifiedVersion <= serverVersion
+        )
 
     def startApi(self):
         """Initiates the message exchange between the client application and
