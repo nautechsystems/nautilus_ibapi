@@ -1,5 +1,5 @@
 """
-Copyright (C) 2019 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
+Copyright (C) 2026 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
  and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
 """
 
@@ -113,5 +113,11 @@ TickTypeEnum = Enum(
     "FINAL_IPO_LAST",
     "DELAYED_YIELD_BID",
     "DELAYED_YIELD_ASK",
+    "ODD_LOT_BID",
+    "ODD_LOT_ASK",
+    "ODD_LOT_BID_SIZE",
+    "ODD_LOT_ASK_SIZE",
+    "ODD_LOT_BID_EXCH",
+    "ODD_LOT_ASK_EXCH",
     "NOT_SET",
 )
