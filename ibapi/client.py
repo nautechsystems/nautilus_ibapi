@@ -32,7 +32,7 @@ from ibapi.errors import (
     FAIL_SEND_CORDER, FAIL_SEND_OORDER, FAIL_SEND_REQCONTRACT, FAIL_SEND_REQMKTDEPTH, FAIL_SEND_CANMKTDEPTH,
     FAIL_SEND_SERVER_LOG_LEVEL, FAIL_SEND_FA_REQUEST, FAIL_SEND_FA_REPLACE, FAIL_SEND_REQSCANNER, FAIL_SEND_CANSCANNER,
     FAIL_SEND_REQSCANNERPARAMETERS, FAIL_SEND_REQHISTDATA, FAIL_SEND_CANHISTDATA, FAIL_SEND_REQRTBARS,
-    FAIL_SEND_CANRTBARS, FAIL_SEND_REQCURRTIME, FAIL_SEND_REQFUNDDATA, FAIL_SEND_CANFUNDDATA,
+    FAIL_SEND_CANRTBARS, FAIL_SEND_REQCURRTIME,
     FAIL_SEND_REQCALCIMPLIEDVOLAT, FAIL_SEND_REQCALCOPTIONPRICE, FAIL_SEND_CANCALCIMPLIEDVOLAT,
     FAIL_SEND_CANCALCOPTIONPRICE, FAIL_SEND_REQGLOBALCANCEL, FAIL_SEND_REQMARKETDATATYPE, FAIL_SEND_REQPOSITIONS,
     FAIL_SEND_CANPOSITIONS, FAIL_SEND_REQACCOUNTDATA, FAIL_SEND_CANACCOUNTDATA, FAIL_SEND_VERIFYREQUEST,
@@ -126,7 +126,6 @@ from ibapi.server_versions import (
     MIN_SERVER_VER_REQ_HISTOGRAM,
     MIN_SERVER_VER_HISTORICAL_TICKS,
     MIN_SERVER_VER_SCANNER_GENERIC_OPTS,
-    MIN_SERVER_VER_FUNDAMENTAL_DATA,
     MIN_SERVER_VER_REQ_NEWS_PROVIDERS,
     MIN_SERVER_VER_REQ_NEWS_ARTICLE,
     MIN_SERVER_VER_NEWS_QUERY_ORIGINS,
@@ -183,7 +182,7 @@ from ibapi.client_utils import createHistoricalTicksRequestProto, createTickByTi
 from ibapi.client_utils import createNewsBulletinsRequestProto, createCancelNewsBulletinsProto, createNewsArticleRequestProto, createNewsProvidersRequestProto
 from ibapi.client_utils import createHistoricalNewsRequestProto, createWshMetaDataRequestProto, createCancelWshMetaDataProto, createWshEventDataRequestProto, createCancelWshEventDataProto
 from ibapi.client_utils import createScannerParametersRequestProto, createScannerSubscriptionRequestProto, createCancelScannerSubscriptionProto
-from ibapi.client_utils import createFundamentalsDataRequestProto, createCancelFundamentalsDataProto, createPnLRequestProto, createCancelPnLProto, createPnLSingleRequestProto, createCancelPnLSingleProto
+from ibapi.client_utils import createPnLRequestProto, createCancelPnLProto, createPnLSingleRequestProto, createCancelPnLSingleProto
 from ibapi.client_utils import createFARequestProto, createFAReplaceProto, createExerciseOptionsRequestProto
 from ibapi.client_utils import createCalculateImpliedVolatilityRequestProto, createCancelCalculateImpliedVolatilityProto, createCalculateOptionPriceRequestProto, createCancelCalculateOptionPriceProto
 from ibapi.client_utils import createSecDefOptParamsRequestProto, createSoftDollarTiersRequestProto, createFamilyCodesRequestProto, createMatchingSymbolsRequestProto
@@ -242,11 +241,9 @@ from ibapi.protobuf.CancelWshEventData_pb2 import CancelWshEventData as CancelWs
 from ibapi.protobuf.ScannerParametersRequest_pb2 import ScannerParametersRequest as ScannerParametersRequestProto
 from ibapi.protobuf.ScannerSubscriptionRequest_pb2 import ScannerSubscriptionRequest as ScannerSubscriptionRequestProto
 from ibapi.protobuf.ScannerSubscription_pb2 import ScannerSubscription as ScannerSubscriptionProto
-from ibapi.protobuf.FundamentalsDataRequest_pb2 import FundamentalsDataRequest as FundamentalsDataRequestProto
 from ibapi.protobuf.PnLRequest_pb2 import PnLRequest as PnLRequestProto
 from ibapi.protobuf.PnLSingleRequest_pb2 import PnLSingleRequest as PnLSingleRequestProto
 from ibapi.protobuf.CancelScannerSubscription_pb2 import CancelScannerSubscription as CancelScannerSubscriptionProto
-from ibapi.protobuf.CancelFundamentalsData_pb2 import CancelFundamentalsData as CancelFundamentalsDataProto
 from ibapi.protobuf.CancelPnL_pb2 import CancelPnL as CancelPnLProto
 from ibapi.protobuf.CancelPnLSingle_pb2 import CancelPnLSingle as CancelPnLSingleProto
 from ibapi.protobuf.FARequest_pb2 import FARequest as FARequestProto
@@ -465,6 +462,9 @@ class EClient(object):
 
         try:
             self.host = host
+
+            if not self.host: self.host = "127.0.0.1"
+
             self.port = port
             self.clientId = clientId
             logger.debug(
@@ -5876,192 +5876,6 @@ class EClient(object):
         
         except Exception as ex:
             self.wrapper.error(reqId, currentTimeMillis(), FAIL_SEND_CANRTBARS.code(), FAIL_SEND_CANRTBARS.msg() + str(ex))
-            return
-
-    #########################################################################
-    # Fundamental Data
-    #########################################################################
-
-    def reqFundamentalData(
-        self,
-        reqId: TickerId,
-        contract: Contract,
-        reportType: str,
-        fundamentalDataOptions: TagValueList,
-    ):
-        """Call this function to receive fundamental data for
-        stocks. The appropriate market data subscription must be set up in
-        Account Management before you can receive this data.
-        Fundamental data will be returned at EWrapper.fundamentalData().
-
-        reqFundamentalData() can handle conid specified in the Contract object,
-        but not tradingClass or multiplier. This is because reqFundamentalData()
-        is used only for stocks and stocks do not have a multiplier and
-        trading class.
-
-        reqId:tickerId - The ID of the data request. Ensures that responses are
-             matched to requests if several requests are in process.
-        contract:Contract - This structure contains a description of the
-            contract for which fundamental data is being requested.
-        reportType:str - One of the following XML reports:
-            ReportSnapshot (company overview)
-            ReportsFinSummary (financial summary)
-            ReportRatios (financial ratios)
-            ReportsFinStatements (financial statements)
-            RESC (analyst estimates)"""
-
-        if self.useProtoBuf(OUT.REQ_FUNDAMENTAL_DATA):
-            self.reqFundamentalsDataProtoBuf(createFundamentalsDataRequestProto(reqId, contract, reportType, fundamentalDataOptions))
-            return
-
-        self.logRequest(current_fn_name(), vars())
-
-        if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        try:
-            VERSION = 2
-
-            if self.serverVersion() < MIN_SERVER_VER_FUNDAMENTAL_DATA:
-                self.wrapper.error(
-                    NO_VALID_ID,
-                    currentTimeMillis(),
-                    UPDATE_TWS.code(),
-                    UPDATE_TWS.msg()
-                    + "  It does not support fundamental data request.",
-                )
-                return
-
-            if self.serverVersion() < MIN_SERVER_VER_TRADING_CLASS:
-                self.wrapper.error(
-                    NO_VALID_ID,
-                    currentTimeMillis(),
-                    UPDATE_TWS.code(),
-                    UPDATE_TWS.msg()
-                    + "  It does not support conId parameter in reqFundamentalData.",
-                )
-                return
-
-            flds = []
-            flds += [
-                make_field(VERSION),
-                make_field(reqId),
-            ]
-
-            # send contract fields
-            if self.serverVersion() >= MIN_SERVER_VER_TRADING_CLASS:
-                flds += [
-                    make_field(contract.conId),
-                ]
-            flds += [
-                make_field(contract.symbol),
-                make_field(contract.secType),
-                make_field(contract.exchange),
-                make_field(contract.primaryExchange),
-                make_field(contract.currency),
-                make_field(contract.localSymbol),
-                make_field(reportType),
-            ]
-
-            if self.serverVersion() >= MIN_SERVER_VER_LINKING:
-                fundDataOptStr = ""
-                tagValuesCount = (
-                    len(fundamentalDataOptions) if fundamentalDataOptions else 0
-                )
-                if fundamentalDataOptions:
-                    for fundDataOption in fundamentalDataOptions:
-                        fundDataOptStr += str(fundDataOption)
-                flds += [make_field(tagValuesCount), make_field(fundDataOptStr)]
-
-            msg = "".join(flds)
-            self.sendMsg(OUT.REQ_FUNDAMENTAL_DATA, msg)
-
-        except ClientException as ex:
-            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
-            return
-        except Exception as ex:
-            self.wrapper.error(reqId, currentTimeMillis(), FAIL_SEND_REQFUNDDATA.code(), FAIL_SEND_REQFUNDDATA.msg() + str(ex))
-            return
-
-    def reqFundamentalsDataProtoBuf(self, fundamentalsDataRequestProto: FundamentalsDataRequestProto):
-        if fundamentalsDataRequestProto is None:
-            return
-
-        self.logRequest(current_fn_name(), vars())
-
-        reqId = fundamentalsDataRequestProto.reqId if fundamentalsDataRequestProto.HasField('reqId') else NO_VALID_ID
-
-        if not self.isConnected():
-            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        try:
-            serializedString = fundamentalsDataRequestProto.SerializeToString()
-            self.sendMsgProtoBuf(OUT.REQ_FUNDAMENTAL_DATA + PROTOBUF_MSG_ID, serializedString)
-
-        except ClientException as ex:
-            self.wrapper.error(reqId, currentTimeMillis(), ex.code, ex.msg + ex.text)
-            return
-        except Exception as ex:
-            self.wrapper.error(reqId, currentTimeMillis(), FAIL_SEND_REQFUNDDATA.code(), FAIL_SEND_REQFUNDDATA.msg() + str(ex))
-            return
-
-    def cancelFundamentalData(self, reqId: TickerId):
-        """Call this function to stop receiving fundamental data.
-
-        reqId:TickerId - The ID of the data request."""
-
-        if self.useProtoBuf(OUT.CANCEL_FUNDAMENTAL_DATA):
-            self.cancelFundamentalsDataProtoBuf(createCancelFundamentalsDataProto(reqId))
-            return
-
-        self.logRequest(current_fn_name(), vars())
-
-        if not self.isConnected():
-            self.wrapper.error(NO_VALID_ID, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        if self.serverVersion() < MIN_SERVER_VER_FUNDAMENTAL_DATA:
-            self.wrapper.error(
-                NO_VALID_ID,
-                currentTimeMillis(),
-                UPDATE_TWS.code(),
-                UPDATE_TWS.msg() + "  It does not support fundamental data request.",
-            )
-            return
-
-        try:
-            VERSION = 1
-
-            msg = (
-                make_field(VERSION)
-                + make_field(reqId)
-            )
-
-            self.sendMsg(OUT.CANCEL_FUNDAMENTAL_DATA, msg)
-        except Exception as ex:
-            self.wrapper.error(reqId, currentTimeMillis(), FAIL_SEND_CANFUNDDATA.code(), FAIL_SEND_CANFUNDDATA.msg() + str(ex))
-            return
-
-    def cancelFundamentalsDataProtoBuf(self, cancelFundamentalsDataProto: CancelFundamentalsDataProto):
-        if cancelFundamentalsDataProto is None:
-            return
-
-        self.logRequest(current_fn_name(), vars())
-
-        reqId = cancelFundamentalsDataProto.reqId if cancelFundamentalsDataProto.HasField('reqId') else NO_VALID_ID
-
-        if not self.isConnected():
-            self.wrapper.error(reqId, currentTimeMillis(), NOT_CONNECTED.code(), NOT_CONNECTED.msg())
-            return
-
-        try:
-            serializedString = cancelFundamentalsDataProto.SerializeToString()
-            self.sendMsgProtoBuf(OUT.CANCEL_FUNDAMENTAL_DATA + PROTOBUF_MSG_ID, serializedString)
-
-        except Exception as ex:
-            self.wrapper.error(reqId, currentTimeMillis(), FAIL_SEND_CANFUNDDATA.code(), FAIL_SEND_CANFUNDDATA.msg() + str(ex))
             return
 
     ########################################################################
