@@ -218,8 +218,6 @@ def main():
     #                             "1 hour", "TRADES", 0, 1, [])
     # app.cancelHistoricalData(5001)
 
-    # app.reqFundamentalData(6001, contract, "ReportSnapshot")
-    # app.cancelFundamentalData(6001)
     # app.queryDisplayGroups(7001)
     # app.subscribeToGroupEvents(7002, 1)
     # app.unsubscribeFromGroupEvents(7002)
