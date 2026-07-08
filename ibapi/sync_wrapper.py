@@ -361,6 +361,11 @@ class TWSSyncWrapper(EWrapper, EClient):
 			self.market_data[reqId]["News"] = []
 		self.market_data[reqId]["News"].append({"timeStamp": timeStamp, "providerCode":providerCode, "articleId":articleId, "headline": headline, "extraData": extraData})
 	
+	def tickOptionComputation(self, reqId, tickType, tickAttrib, impliedVol, delta, optPrice, pvDividend, gamma, vega, theta, undPrice):
+		if reqId not in self.market_data:
+			self.market_data[reqId] = {}
+		self.market_data[reqId][TickTypeEnum.toStr(tickType)] = {"tickAttrib": tickAttrib, "impliedVol":impliedVol, "delta":delta, "optPrice": optPrice, "pvDividend": pvDividend, "gamma": gamma, "vega": vega, "theta": theta, "undPrice": undPrice}
+	
 	def tickSnapshotEnd(self, reqId: int):
 		"""Called when all market data for a snapshot has been received."""
 		self._set_event(reqId, "market_data", self.market_data.get(reqId, {}))

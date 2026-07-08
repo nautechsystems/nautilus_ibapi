@@ -71,11 +71,9 @@ from ibapi.protobuf.CancelWshEventData_pb2 import CancelWshEventData as CancelWs
 from ibapi.protobuf.ScannerParametersRequest_pb2 import ScannerParametersRequest as ScannerParametersRequestProto
 from ibapi.protobuf.ScannerSubscriptionRequest_pb2 import ScannerSubscriptionRequest as ScannerSubscriptionRequestProto
 from ibapi.protobuf.ScannerSubscription_pb2 import ScannerSubscription as ScannerSubscriptionProto
-from ibapi.protobuf.FundamentalsDataRequest_pb2 import FundamentalsDataRequest as FundamentalsDataRequestProto
 from ibapi.protobuf.PnLRequest_pb2 import PnLRequest as PnLRequestProto
 from ibapi.protobuf.PnLSingleRequest_pb2 import PnLSingleRequest as PnLSingleRequestProto
 from ibapi.protobuf.CancelScannerSubscription_pb2 import CancelScannerSubscription as CancelScannerSubscriptionProto
-from ibapi.protobuf.CancelFundamentalsData_pb2 import CancelFundamentalsData as CancelFundamentalsDataProto
 from ibapi.protobuf.CancelPnL_pb2 import CancelPnL as CancelPnLProto
 from ibapi.protobuf.CancelPnLSingle_pb2 import CancelPnLSingle as CancelPnLSingleProto
 from ibapi.protobuf.FARequest_pb2 import FARequest as FARequestProto
@@ -885,16 +883,6 @@ def createScannerSubscriptionProto(subscription: ScannerSubscription,
     return scannerSubscriptionProto
 
 @staticmethod
-def createFundamentalsDataRequestProto(reqId: int, contract: Contract, reportType: str, fundamentalsDataOptionsList: TagValueList) -> FundamentalsDataRequestProto:
-    fundamentalsDataRequestProto = FundamentalsDataRequestProto()
-    if isValidIntValue(reqId): fundamentalsDataRequestProto.reqId = reqId
-    contractProto = createContractProto(contract, None)
-    if contractProto is not None: fundamentalsDataRequestProto.contract.CopyFrom(contractProto)
-    if reportType: fundamentalsDataRequestProto.reportType = reportType
-    fillTagValueList(fundamentalsDataOptionsList, fundamentalsDataRequestProto.fundamentalsDataOptions)
-    return fundamentalsDataRequestProto
-
-@staticmethod
 def createPnLRequestProto(reqId: int, account: str, modelCode: str) -> PnLRequestProto:
     pnlRequestProto = PnLRequestProto()
     if isValidIntValue(reqId): pnlRequestProto.reqId = reqId
@@ -916,12 +904,6 @@ def createCancelScannerSubscriptionProto(reqId: int) -> CancelScannerSubscriptio
     cancelScannerSubscriptionProto = CancelScannerSubscriptionProto()
     if isValidIntValue(reqId): cancelScannerSubscriptionProto.reqId = reqId
     return cancelScannerSubscriptionProto
-
-@staticmethod
-def createCancelFundamentalsDataProto(reqId: int) -> CancelFundamentalsDataProto:
-    cancelFundamentalsDataProto = CancelFundamentalsDataProto()
-    if isValidIntValue(reqId): cancelFundamentalsDataProto.reqId = reqId
-    return cancelFundamentalsDataProto
 
 @staticmethod
 def createCancelPnLProto(reqId: int) -> CancelPnLProto:

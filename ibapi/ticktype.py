@@ -55,7 +55,7 @@ TickTypeEnum = Enum(
     "CLOSE_EFP_COMPUTATION",
     "LAST_TIMESTAMP",
     "SHORTABLE",
-    "FUNDAMENTAL_RATIOS",
+    "NOT_USED",
     "RT_VOLUME",
     "HALTED",
     "BID_YIELD",

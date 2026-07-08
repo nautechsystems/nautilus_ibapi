@@ -104,7 +104,6 @@ from ibapi.protobuf.WshEventData_pb2 import WshEventData as WshEventDataProto
 from ibapi.protobuf.TickNews_pb2 import TickNews as TickNewsProto
 from ibapi.protobuf.ScannerParameters_pb2 import ScannerParameters as ScannerParametersProto
 from ibapi.protobuf.ScannerData_pb2 import ScannerData as ScannerDataProto
-from ibapi.protobuf.FundamentalsData_pb2 import FundamentalsData as FundamentalsDataProto
 from ibapi.protobuf.PnL_pb2 import PnL as PnLProto
 from ibapi.protobuf.PnLSingle_pb2 import PnLSingle as PnLSingleProto
 from ibapi.protobuf.ReceiveFA_pb2 import ReceiveFA as ReceiveFAProto
@@ -540,13 +539,6 @@ class EWrapper:
     def currentTime(self, time: int):
         """Server's current time. This method will receive IB server's system
         time resulting after the invocation of reqCurrentTime."""
-
-        logAnswer(current_fn_name(), vars())
-
-    def fundamentalData(self, reqId: TickerId, data: str):
-        """This function is called to receive fundamental
-        market data. The appropriate market data subscription must be set
-        up in Account Management before you can receive this data."""
 
         logAnswer(current_fn_name(), vars())
 
@@ -1103,9 +1095,6 @@ class EWrapper:
         logAnswer(current_fn_name(), vars())
 
     def scannerDataProtoBuf(self, scannerDataProto: ScannerDataProto):
-        logAnswer(current_fn_name(), vars())
-
-    def fundamentalsDataProtoBuf(self, fundamentalsDataProto: FundamentalsDataProto):
         logAnswer(current_fn_name(), vars())
 
     def pnlProtoBuf(self, pnlProto: PnLProto):
