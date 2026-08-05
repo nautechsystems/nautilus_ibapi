@@ -1,7 +1,22 @@
 """
-Copyright (C) 2025 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
- and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
+Python TWS API Client
+
+Copyright (C) 2013-2026  Interactive Brokers LLC
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
+
 from decimal import Decimal
 
 from ibapi.contract import ComboLeg, Contract, DeltaNeutralContract, ContractDetails
@@ -545,6 +560,7 @@ def decodeContractDetails(contractProto: ContractProto, contractDetailsProto: Co
     if contractDetailsProto.HasField('eventContract1'): contractDetails.eventContract1 = contractDetailsProto.eventContract1
     if contractDetailsProto.HasField('eventContractDescription1'): contractDetails.eventContractDescription1 = contractDetailsProto.eventContractDescription1
     if contractDetailsProto.HasField('eventContractDescription2'): contractDetails.eventContractDescription2 = contractDetailsProto.eventContractDescription2
+    if contractDetailsProto.HasField('settlementMethod'): contractDetails.settlementMethod = contractDetailsProto.settlementMethod
 
     return contractDetails
 

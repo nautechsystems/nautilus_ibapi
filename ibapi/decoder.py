@@ -1,7 +1,22 @@
 """
-Copyright (C) 2025 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
- and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
+Python TWS API Client
+
+Copyright (C) 2013-2026  Interactive Brokers LLC
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
+
 from ibapi.const import NO_VALID_ID
 from ibapi.utils import getEnumTypeFromString
 from ibapi.common import PROTOBUF_MSG_ID
@@ -91,7 +106,6 @@ from ibapi.protobuf.WshEventData_pb2 import WshEventData as WshEventDataProto
 from ibapi.protobuf.TickNews_pb2 import TickNews as TickNewsProto
 from ibapi.protobuf.ScannerParameters_pb2 import ScannerParameters as ScannerParametersProto
 from ibapi.protobuf.ScannerData_pb2 import ScannerData as ScannerDataProto
-from ibapi.protobuf.FundamentalsData_pb2 import FundamentalsData as FundamentalsDataProto
 from ibapi.protobuf.PnL_pb2 import PnL as PnLProto
 from ibapi.protobuf.PnLSingle_pb2 import PnLSingle as PnLSingleProto
 from ibapi.protobuf.ReceiveFA_pb2 import ReceiveFA as ReceiveFAProto
@@ -2565,17 +2579,6 @@ class Decoder(Object):
 
         self.wrapper.scannerParameters(xml)
 
-    def processFundamentalsDataMsgProtoBuf(self, protobuf):
-        fundamentalsDataProto = FundamentalsDataProto()
-        fundamentalsDataProto.ParseFromString(protobuf)
-
-        self.wrapper.fundamentalsDataProtoBuf(fundamentalsDataProto)
-
-        reqId = fundamentalsDataProto.reqId if fundamentalsDataProto.HasField('reqId') else NO_VALID_ID
-        data = fundamentalsDataProto.data if fundamentalsDataProto.HasField('data') else ""
-
-        self.wrapper.fundamentalData(reqId, data)
-
     def processReceiveFAMsgProtoBuf(self, protobuf):
         receiveFAProto = ReceiveFAProto()
         receiveFAProto.ParseFromString(protobuf)
@@ -2820,7 +2823,6 @@ class Decoder(Object):
         IN.TICK_EFP: HandleInfo(wrap=EWrapper.tickEFP),
         IN.CURRENT_TIME: HandleInfo(wrap=EWrapper.currentTime),
         IN.REAL_TIME_BARS: HandleInfo(proc=processRealTimeBarMsg),
-        IN.FUNDAMENTAL_DATA: HandleInfo(wrap=EWrapper.fundamentalData),
         IN.CONTRACT_DATA_END: HandleInfo(wrap=EWrapper.contractDetailsEnd),
         IN.OPEN_ORDER_END: HandleInfo(wrap=EWrapper.openOrderEnd),
         IN.ACCT_DOWNLOAD_END: HandleInfo(wrap=EWrapper.accountDownloadEnd),
@@ -2941,7 +2943,6 @@ class Decoder(Object):
         IN.TICK_NEWS: HandleInfo(proc=processTickNewsMsgProtoBuf),
         IN.SCANNER_PARAMETERS: HandleInfo(proc=processScannerParametersMsgProtoBuf),
         IN.SCANNER_DATA: HandleInfo(proc=processScannerDataMsgProtoBuf),
-        IN.FUNDAMENTAL_DATA: HandleInfo(proc=processFundamentalsDataMsgProtoBuf),
         IN.PNL: HandleInfo(proc=processPnLMsgProtoBuf),
         IN.PNL_SINGLE: HandleInfo(proc=processPnLSingleMsgProtoBuf),
         IN.RECEIVE_FA: HandleInfo(proc=processReceiveFAMsgProtoBuf),
