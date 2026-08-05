@@ -1,6 +1,20 @@
 """
-Copyright (C) 2025 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
- and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
+Python TWS API Client
+
+Copyright (C) 2013-2026  Interactive Brokers LLC
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 from ibapi.const import UNSET_DOUBLE
@@ -71,11 +85,9 @@ from ibapi.protobuf.CancelWshEventData_pb2 import CancelWshEventData as CancelWs
 from ibapi.protobuf.ScannerParametersRequest_pb2 import ScannerParametersRequest as ScannerParametersRequestProto
 from ibapi.protobuf.ScannerSubscriptionRequest_pb2 import ScannerSubscriptionRequest as ScannerSubscriptionRequestProto
 from ibapi.protobuf.ScannerSubscription_pb2 import ScannerSubscription as ScannerSubscriptionProto
-from ibapi.protobuf.FundamentalsDataRequest_pb2 import FundamentalsDataRequest as FundamentalsDataRequestProto
 from ibapi.protobuf.PnLRequest_pb2 import PnLRequest as PnLRequestProto
 from ibapi.protobuf.PnLSingleRequest_pb2 import PnLSingleRequest as PnLSingleRequestProto
 from ibapi.protobuf.CancelScannerSubscription_pb2 import CancelScannerSubscription as CancelScannerSubscriptionProto
-from ibapi.protobuf.CancelFundamentalsData_pb2 import CancelFundamentalsData as CancelFundamentalsDataProto
 from ibapi.protobuf.CancelPnL_pb2 import CancelPnL as CancelPnLProto
 from ibapi.protobuf.CancelPnLSingle_pb2 import CancelPnLSingle as CancelPnLSingleProto
 from ibapi.protobuf.FARequest_pb2 import FARequest as FARequestProto
@@ -885,16 +897,6 @@ def createScannerSubscriptionProto(subscription: ScannerSubscription,
     return scannerSubscriptionProto
 
 @staticmethod
-def createFundamentalsDataRequestProto(reqId: int, contract: Contract, reportType: str, fundamentalsDataOptionsList: TagValueList) -> FundamentalsDataRequestProto:
-    fundamentalsDataRequestProto = FundamentalsDataRequestProto()
-    if isValidIntValue(reqId): fundamentalsDataRequestProto.reqId = reqId
-    contractProto = createContractProto(contract, None)
-    if contractProto is not None: fundamentalsDataRequestProto.contract.CopyFrom(contractProto)
-    if reportType: fundamentalsDataRequestProto.reportType = reportType
-    fillTagValueList(fundamentalsDataOptionsList, fundamentalsDataRequestProto.fundamentalsDataOptions)
-    return fundamentalsDataRequestProto
-
-@staticmethod
 def createPnLRequestProto(reqId: int, account: str, modelCode: str) -> PnLRequestProto:
     pnlRequestProto = PnLRequestProto()
     if isValidIntValue(reqId): pnlRequestProto.reqId = reqId
@@ -916,12 +918,6 @@ def createCancelScannerSubscriptionProto(reqId: int) -> CancelScannerSubscriptio
     cancelScannerSubscriptionProto = CancelScannerSubscriptionProto()
     if isValidIntValue(reqId): cancelScannerSubscriptionProto.reqId = reqId
     return cancelScannerSubscriptionProto
-
-@staticmethod
-def createCancelFundamentalsDataProto(reqId: int) -> CancelFundamentalsDataProto:
-    cancelFundamentalsDataProto = CancelFundamentalsDataProto()
-    if isValidIntValue(reqId): cancelFundamentalsDataProto.reqId = reqId
-    return cancelFundamentalsDataProto
 
 @staticmethod
 def createCancelPnLProto(reqId: int) -> CancelPnLProto:

@@ -1,11 +1,27 @@
 """
-Copyright (C) 2025 Interactive Brokers LLC. All rights reserved. This code is subject to the terms
- and conditions of the IB API Non-Commercial License or the IB API Commercial License, as applicable.
+Python TWS API Client
+
+Copyright (C) 2013-2026  Interactive Brokers LLC
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
 """
 
 """
 High level IB message info.
 """
+
+from enum import IntEnum
 
 # field types
 INT = 1
@@ -14,7 +30,7 @@ FLT = 3
 
 
 # incoming msg id's
-class IN:
+class IN(IntEnum):
     TICK_PRICE = 1
     TICK_SIZE = 2
     ORDER_STATUS = 3
@@ -41,7 +57,6 @@ class IN:
     TICK_EFP = 47
     CURRENT_TIME = 49
     REAL_TIME_BARS = 50
-    FUNDAMENTAL_DATA = 51
     CONTRACT_DATA_END = 52
     OPEN_ORDER_END = 53
     ACCT_DOWNLOAD_END = 54
@@ -104,7 +119,7 @@ class IN:
 
 
 # outgoing msg id's
-class OUT:
+class OUT(IntEnum):
     REQ_MKT_DATA = 1
     CANCEL_MKT_DATA = 2
     PLACE_ORDER = 3
@@ -133,8 +148,6 @@ class OUT:
     REQ_CURRENT_TIME = 49
     REQ_REAL_TIME_BARS = 50
     CANCEL_REAL_TIME_BARS = 51
-    REQ_FUNDAMENTAL_DATA = 52
-    CANCEL_FUNDAMENTAL_DATA = 53
     REQ_CALC_IMPLIED_VOLAT = 54
     REQ_CALC_OPTION_PRICE = 55
     CANCEL_CALC_IMPLIED_VOLAT = 56
